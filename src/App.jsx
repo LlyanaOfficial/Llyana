@@ -26,7 +26,7 @@ const dbPost=(t,d,tk)=>db('POST',t,tk,d);
 const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
 
 // ── Gemini AI Engine ─────────────────────────────────────────
-const GEMINI_KEY = 'AIzaSyC09pCMTT8xio3bXk0uOxaCX8MooK4KjMg';
+const GEMINI_KEY = 'AIzaSyA7xZah2veaVqu0QHDjtOEFuX0D2XzC2Kk';
 const GEMINI_MODEL = 'gemini-2.0-flash-lite';
 const LLYANA_CORE = `You are Llyana, a Nuclear Engineering AI by Avolv Energy Technologies. RULES:
 - SAFETY FIRST: Always prioritise safety over efficiency. If threshold breached, alert immediately.
