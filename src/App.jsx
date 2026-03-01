@@ -97,19 +97,24 @@ JSON shape: {"alert_level":"...","confidence":92,"raw_power_w":15.75,"net_power_
 };
 
 async function geminiAnalyze(module, params, history = []) {
-  if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_YOUR_KEY_HERE') return null;
+  if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_YOUR_KEY_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
+    console.log('Llyana: Calling Gemini for', module);
+    const r = await fetch(url, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}\n\nAnalyze now. JSON only.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:1500} })
     });
-    if (!r.ok) return null;
+    if (!r.ok) { const err = await r.text(); console.error('Llyana Gemini HTTP error:', r.status, err); return null; }
     const d = await r.json();
     const txt = d?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!txt) return null;
-    return JSON.parse(txt.replace(/```json\s?/g,'').replace(/```/g,'').trim());
-  } catch(e) { console.error('Gemini:',e); return null; }
+    if (!txt) { console.error('Llyana: No text in Gemini response', d); return null; }
+    console.log('Llyana: Gemini raw response:', txt.slice(0, 200));
+    const parsed = JSON.parse(txt.replace(/```json\s?/g,'').replace(/```/g,'').trim());
+    console.log('Llyana: Gemini parsed OK, alert_level:', parsed.alert_level);
+    return parsed;
+  } catch(e) { console.error('Llyana Gemini error:', e); return null; }
 }
 
 const C={bg:'#060608',bgCard:'#0D0D10',bgCardHover:'#131318',bgSidebar:'#0A0A0D',bgInput:'#111115',border:'#1A1A20',borderLight:'#252530',red:'#E63946',redGlow:'rgba(230,57,70,0.35)',redDim:'rgba(230,57,70,0.08)',green:'#10b981',greenDim:'rgba(16,185,129,0.1)',yellow:'#f59e0b',yellowDim:'rgba(245,158,11,0.1)',orange:'#f97316',orangeDim:'rgba(249,115,22,0.1)',cyan:'#06b6d4',cyanDim:'rgba(6,182,212,0.1)',gray:'#6b7280',text:'#E8E8EC',dim:'#8888A0',muted:'#50506A',veryMuted:'#2A2A3A'};
@@ -184,7 +189,7 @@ function LnChart({data,w=800,h=180,color=C.red,showArea,label}){if(!data?.length
 
 function BrChart({data,labels,w=700,h=180,color=C.red}){const mx=Math.max(...data)*1.2||1;const bw=w/data.length*.55,gap=w/data.length*.45;return(<div style={{width:'100%'}}><svg viewBox={`0 0 ${w} ${h+28}`} style={{width:'100%'}}><defs><linearGradient id="bg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color}/><stop offset="100%" stopColor={color} stopOpacity=".5"/></linearGradient></defs>{data.map((v,i)=>{const bh=(v/mx)*h,x=i*(bw+gap)+gap/2;return(<g key={i}><rect x={x} y={h-bh} width={bw} height={bh} fill="url(#bg1)" rx="4" style={{transformOrigin:`${x}px ${h}px`,animation:`barGrow .6s ease-out ${i*.08}s both`}}/>{labels?.[i]&&<text x={x+bw/2} y={h+16} textAnchor="middle" fill={C.muted} fontSize="8.5">{labels[i]}</text>}</g>)})}</svg></div>)}
 
-function Gauge({value,label,size=120}){const a=(value/100)*270-135,r=size/2-12,cx=size/2,cy=size/2;const sA=-135*Math.PI/180,eA=a*Math.PI/180,bgE=135*Math.PI/180;const arc=(s,e)=>{const x1=cx+r*Math.cos(s),y1=cy+r*Math.sin(s),x2=cx+r*Math.cos(e),y2=cy+r*Math.sin(e);return`M${x1} ${y1}A${r} ${r} 0 ${e-s>Math.PI?1:0} 1 ${x2} ${y2}`};const gc=value>95?C.green:value>85?C.yellow:value>70?C.orange:C.red;return(<div style={{display:'flex',flexDirection:'column',alignItems:'center'}}><svg width={size} height={size*.82} viewBox={`0 0 ${size} ${size*.82}`}><path d={arc(sA,bgE)} fill="none" stroke={C.veryMuted} strokeWidth="7" strokeLinecap="round"/><path d={arc(sA,eA)} fill="none" stroke={gc} strokeWidth="7" strokeLinecap="round" style={{filter:`drop-shadow(0 0 8px ${gc}50)`}}/></svg><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'20px',fontWeight:700,color:gc,marginTop:-6}}>{value}%</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{label}</div></div>)}
+function Gauge({value,label,size=120}){const a=(value/100)*270-135,r=size/2-12,cx=size/2,cy=size/2+4;const sA=-135*Math.PI/180,eA=a*Math.PI/180,bgE=135*Math.PI/180;const arc=(s,e)=>{const x1=cx+r*Math.cos(s),y1=cy+r*Math.sin(s),x2=cx+r*Math.cos(e),y2=cy+r*Math.sin(e);return`M${x1} ${y1}A${r} ${r} 0 ${e-s>Math.PI?1:0} 1 ${x2} ${y2}`};const gc=value>95?C.green:value>85?C.yellow:value>70?C.orange:C.red;return(<div style={{display:'flex',flexDirection:'column',alignItems:'center'}}><svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}><path d={arc(sA,bgE)} fill="none" stroke={C.veryMuted} strokeWidth="7" strokeLinecap="round"/><path d={arc(sA,eA)} fill="none" stroke={gc} strokeWidth="7" strokeLinecap="round" style={{filter:`drop-shadow(0 0 8px ${gc}50)`}}/></svg><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'20px',fontWeight:700,color:gc,marginTop:-16}}>{value}%</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{label}</div></div>)}
 
 // ═══════════════════════════════════════════════════════════════
 // SYSTEM STATUS CONTEXT — shared realtime state
@@ -392,9 +397,9 @@ function ReactorPage({token,userId}){
         {history.length>1&&<Card title="Efficiency History" delay={.45}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Last readings"/></Card>}
       </div>
       <Card title="Parameters" delay={.15}>
-        <Inp label="Core Temperature" value={ct} onChange={setCt} unit={"\u00B0C"} required min={280} max={600} hint="Range: 280\u2013600\u00B0C"/>
-        <Inp label="Pressure" value={pr} onChange={setPr} unit="bar" required min={100} max={180} hint="Range: 100\u2013180 bar"/>
-        <Inp label="Flow Rate" value={fr} onChange={setFr} unit="L/s" required min={3500} max={5000} hint="Range: 3500\u20135000 L/s"/>
+        <Inp label="Core Temperature" value={ct} onChange={setCt} unit={"°C"} required min={280} max={600} hint="Range: 280–600°C"/>
+        <Inp label="Pressure" value={pr} onChange={setPr} unit="bar" required min={100} max={180} hint="Range: 100–180 bar"/>
+        <Inp label="Flow Rate" value={fr} onChange={setFr} unit="L/s" required min={3500} max={5000} hint="Range: 3500–5000 L/s"/>
         <Btn onClick={run} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Analysis'}</Btn>
         <Btn outline style={{marginTop:8}} onClick={()=>{setCt('550');setPr('155');setFr('4200')}}>Reset Defaults</Btn>
         {confidence&&<div style={{marginTop:12,padding:'8px 12px',background:C.cyanDim,borderRadius:8,border:`1px solid ${C.cyan}15`}}><div style={{fontSize:'10px',color:C.cyan,fontWeight:600}}>AI CONFIDENCE</div><div style={{fontFamily:'monospace',fontSize:'20px',fontWeight:700,color:C.cyan}}>{confidence}%</div></div>}
@@ -439,7 +444,7 @@ function ThermalPage({token,userId}){
       </div>
       <Card title="Power Control" delay={.15}>
         <Inp label="Target Power" value={tp} onChange={setTp} unit="MW" required min={0} max={4000}/>
-        <Inp label="Coolant Temp" value={ct} onChange={setCt} unit={"\u00B0C"} required min={250} max={320}/>
+        <Inp label="Coolant Temp" value={ct} onChange={setCt} unit={"°C"} required min={250} max={320}/>
         <Btn onClick={save} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Calculation'}</Btn>
         <div style={{marginTop:16,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{['Steam Generator','Turbine','Condenser'].map(c=><div key={c} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',fontSize:'12px'}}><span style={{color:C.dim}}>{c}</span><span style={{color:last&&(c==='Turbine'&&last.turbine_status==='WARNING')?C.yellow:last&&(last[c.toLowerCase().replace(/ /g,'_')+'_status']==='WARNING')?C.yellow:C.green,fontWeight:600,fontFamily:'monospace',fontSize:'11px'}}>{last?last[c==='Steam Generator'?'steam_generator_status':c==='Turbine'?'turbine_status':'condenser_status']||'OPTIMAL':'OPTIMAL'}</span></div>)}</div>
       </Card>
