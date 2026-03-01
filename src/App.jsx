@@ -227,7 +227,7 @@ async function geminiAnalyze(module, params, history = []) {
     console.log('Llyana: Calling Gemini for', module, retryNum > 0 ? `(retry ${retryNum})` : '', brainCtx ? '(with cross-module brain)' : '');
     const r = await fetch(url, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. JSON only.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:1500} })
+      body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. KEEP YOUR RESPONSE COMPACT — max 5 reasoning steps, max 3 recommendations, max 3 cross-module impacts. JSON only, no trailing text.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:4000} })
     });
     if (r.status === 429) {
       const wait = retryNum === 0 ? 8 : 15;
