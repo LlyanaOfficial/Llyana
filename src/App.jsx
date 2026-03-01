@@ -290,7 +290,9 @@ function LoginPage({ onLogin }) {
       });
       const data = await res.json();
       if (data.access_token) {
-        onLogin({ ...data.user, token: data.access_token });
+        const userData = { ...data.user, token: data.access_token, refresh_token: data.refresh_token };
+        try { sessionStorage.setItem('llyana_session', JSON.stringify(userData)); } catch(e) {}
+        onLogin(userData);
       } else {
         setError(data.error_description || 'Invalid credentials');
       }
@@ -382,7 +384,7 @@ const NAV_ITEMS = [
   { id: 'energy',     label: 'Energy Yield',    icon: Icons.energy },
 ];
 
-function DashboardLayout({ currentPage, onNavigate, children, user }) {
+function DashboardLayout({ currentPage, onNavigate, children, user, onLogout }) {
   const [time, setTime] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
@@ -457,7 +459,16 @@ function DashboardLayout({ currentPage, onNavigate, children, user }) {
               <span style={{ fontSize: '11px', color: colors.green, fontWeight: 600 }}>OPERATIONAL</span>
             </div>
             <Icons.bell />
-            <Icons.user />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', position: 'relative' }}>
+              <Icons.user />
+              <span style={{ fontSize: '11px', color: colors.textDim }}>{user?.email ? user.email.split('@')[0] : 'Admin'}</span>
+              {onLogout && (
+                <button onClick={onLogout} title="Sign out" style={{
+                  background: 'transparent', border: `1px solid ${colors.borderLight}`, borderRadius: 4,
+                  color: colors.textMuted, fontSize: '10px', padding: '2px 8px', cursor: 'pointer', marginLeft: 4,
+                }}>Logout</button>
+              )}
+            </div>
           </div>
         </header>
 
@@ -1104,14 +1115,86 @@ function EnergyYieldPage() {
 export default function App() {
   const [user, setUser] = useState(null);
   const [currentPage, setCurrentPage] = useState('overview');
+  const [loading, setLoading] = useState(true);
 
-  // Check for existing session
+  // Restore session on load / refresh
   useEffect(() => {
-    const saved = null; // Session persistence handled by Supabase
+    try {
+      const saved = sessionStorage.getItem('llyana_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Verify token is still valid by calling Supabase
+        fetch(`${SB_URL}/auth/v1/user`, {
+          headers: { 'Authorization': `Bearer ${parsed.token}`, 'apikey': SB_KEY },
+        }).then(res => {
+          if (res.ok) {
+            setUser(parsed);
+          } else if (parsed.refresh_token) {
+            // Token expired — try refresh
+            fetch(`${SB_URL}/auth/v1/token?grant_type=refresh_token`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+              body: JSON.stringify({ refresh_token: parsed.refresh_token }),
+            }).then(r => r.json()).then(data => {
+              if (data.access_token) {
+                const refreshed = { ...data.user, token: data.access_token, refresh_token: data.refresh_token };
+                sessionStorage.setItem('llyana_session', JSON.stringify(refreshed));
+                setUser(refreshed);
+              } else {
+                sessionStorage.removeItem('llyana_session');
+              }
+            }).catch(() => sessionStorage.removeItem('llyana_session'))
+              .finally(() => setLoading(false));
+            return;
+          } else {
+            sessionStorage.removeItem('llyana_session');
+          }
+          setLoading(false);
+        }).catch(() => { sessionStorage.removeItem('llyana_session'); setLoading(false); });
+        return;
+      }
+    } catch(e) {}
+    setLoading(false);
   }, []);
 
+  // Save current page so refresh stays on same page
+  useEffect(() => {
+    try { sessionStorage.setItem('llyana_page', currentPage); } catch(e) {}
+  }, [currentPage]);
+
+  // Restore page on load
+  useEffect(() => {
+    try {
+      const savedPage = sessionStorage.getItem('llyana_page');
+      if (savedPage) setCurrentPage(savedPage);
+    } catch(e) {}
+  }, []);
+
+  const handleLogin = (userData) => {
+    setUser(userData);
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('llyana_session');
+    sessionStorage.removeItem('llyana_page');
+    setUser(null);
+    setCurrentPage('overview');
+  };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0A0A0A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 48, height: 48, borderRadius: '50%', border: '3px solid #1E1E1E', borderTopColor: '#E63946', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
+          <div style={{ color: '#888', fontSize: '13px' }}>Restoring session...</div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
-    return <LoginPage onLogin={setUser} />;
+    return <LoginPage onLogin={handleLogin} />;
   }
 
   const renderPage = () => {
@@ -1128,7 +1211,7 @@ export default function App() {
   };
 
   return (
-    <DashboardLayout currentPage={currentPage} onNavigate={setCurrentPage} user={user}>
+    <DashboardLayout currentPage={currentPage} onNavigate={setCurrentPage} user={user} onLogout={handleLogout}>
       {renderPage()}
     </DashboardLayout>
   );
