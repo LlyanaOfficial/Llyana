@@ -27,7 +27,7 @@ const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
 
 // ── Gemini AI Engine ─────────────────────────────────────────
 const GEMINI_KEY = 'AIzaSyC09pCMTT8xio3bXk0uOxaCX8MooK4KjMg';
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.0-flash-lite';
 const LLYANA_CORE = `You are Llyana, a Nuclear Engineering AI by Avolv Energy Technologies. RULES:
 - SAFETY FIRST: Always prioritise safety over efficiency. If threshold breached, alert immediately.
 - CONSERVATIVE: When ambiguous, assume worst case. Never assume best case.
@@ -96,24 +96,42 @@ DEPLOYMENT INSIGHTS: High traffic zones (>60 steps/min/m²) = premium placement.
 JSON shape: {"alert_level":"...","confidence":92,"raw_power_w":15.75,"net_power_w":13.86,"daily_kwh":0.22,"monthly_kwh":6.65,"efficiency_pct":3.08,"annual_revenue_usd":0.80,"reasoning":[...],"recommendations":[...],"trend_analysis":"...","deployment_insights":"..."}`
 };
 
+// Global AI status for user-facing messages
+let _aiStatusCallback = null;
+function setGlobalAiStatus(msg) { if (_aiStatusCallback) _aiStatusCallback(msg); }
+
 async function geminiAnalyze(module, params, history = []) {
   if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_YOUR_KEY_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
-  try {
+  const attempt = async (retryNum) => {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
-    console.log('Llyana: Calling Gemini for', module);
+    console.log('Llyana: Calling Gemini for', module, retryNum > 0 ? `(retry ${retryNum})` : '');
     const r = await fetch(url, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}\n\nAnalyze now. JSON only.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:1500} })
     });
+    if (r.status === 429) {
+      const wait = retryNum === 0 ? 8 : 15;
+      setGlobalAiStatus(`AI rate limit reached. Retrying in ${wait}s...`);
+      console.log(`Llyana: Rate limited, waiting ${wait}s...`);
+      await new Promise(x=>setTimeout(x,wait*1000));
+      setGlobalAiStatus(null);
+      return 'RETRY';
+    }
     if (!r.ok) { const err = await r.text(); console.error('Llyana Gemini HTTP error:', r.status, err); return null; }
     const d = await r.json();
     const txt = d?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!txt) { console.error('Llyana: No text in Gemini response', d); return null; }
-    console.log('Llyana: Gemini raw response:', txt.slice(0, 200));
+    if (!txt) { console.error('Llyana: No text in response', d); return null; }
+    console.log('Llyana: Gemini raw:', txt.slice(0, 200));
     const parsed = JSON.parse(txt.replace(/```json\s?/g,'').replace(/```/g,'').trim());
-    console.log('Llyana: Gemini parsed OK, alert_level:', parsed.alert_level);
+    console.log('Llyana: Parsed OK, alert:', parsed.alert_level);
     return parsed;
+  };
+  try {
+    let res = await attempt(0);
+    if (res === 'RETRY') res = await attempt(1);
+    if (res === 'RETRY') { setGlobalAiStatus('AI temporarily unavailable. Using local analysis.'); setTimeout(()=>setGlobalAiStatus(null),4000); return null; }
+    return res;
   } catch(e) { console.error('Llyana Gemini error:', e); return null; }
 }
 
@@ -268,7 +286,7 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════
 const NAV=[{id:'overview',label:'Overview',d:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'},{id:'reactor',label:'Reactor Core',d:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83'},{id:'thermal',label:'Thermal & Power',d:'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z'},{id:'materials',label:'Materials',d:'M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5'},{id:'operations',label:'Operations',d:'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'},{id:'safety',label:'Safety',d:'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'},{id:'energy',label:'Energy Yield',d:'M22 12h-4l-3 9L9 3l-3 9H2'}];
 
-function Layout({page,onNav,children,user,onLogout,sysStatus}){
+function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus}){
   const[time,setTime]=useState(new Date());
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
   const localTime=time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
@@ -298,6 +316,7 @@ function Layout({page,onNav,children,user,onLogout,sysStatus}){
         </header>
         <main style={{padding:24}} className={`p-${page}`} key={page}>{children}</main>
       </div>
+      {aiStatus&&<div style={{position:'fixed',bottom:24,left:'50%',transform:'translateX(-50%)',background:'#1a1a2e',border:`1px solid ${C.cyan}40`,borderRadius:12,padding:'12px 24px',display:'flex',alignItems:'center',gap:10,zIndex:9999,animation:'fadeUp .3s ease-out',boxShadow:`0 4px 20px rgba(6,182,212,0.15)`}}><div style={{width:14,height:14,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan,fontWeight:500}}>{aiStatus}</span></div>}
     </div>
   );
 }
@@ -633,8 +652,12 @@ function EnergyPage({token,userId}){
 // ═══════════════════════════════════════════════════════════════
 export default function App(){
   const[user,setUser]=useState(null);const[page,setPage]=useState('overview');const[loading,setLoading]=useState(true);
+  const[aiStatus,setAiStatus]=useState(null);
   const token=user?.token;const userId=user?.id;
   const sysStatus=useSystemStatus(token);
+
+  // Wire up global AI status callback
+  useEffect(()=>{_aiStatusCallback=setAiStatus;return()=>{_aiStatusCallback=null}},[]);
 
   useEffect(()=>{try{const s=sessionStorage.getItem('llyana_session');if(s){const p=JSON.parse(s);fetch(`${SB_URL}/auth/v1/user`,{headers:{Authorization:`Bearer ${p.token}`,apikey:SB_KEY}}).then(r=>{if(r.ok)setUser(p);else sessionStorage.removeItem('llyana_session');setLoading(false)}).catch(()=>{sessionStorage.removeItem('llyana_session');setLoading(false)});return}}catch(e){}setLoading(false)},[]);
   useEffect(()=>{try{sessionStorage.setItem('llyana_page',page)}catch(e){}},[page]);
@@ -653,5 +676,5 @@ export default function App(){
     safety:<SafetyPage token={token} userId={userId}/>,
     energy:<EnergyPage token={token} userId={userId}/>,
   };
-  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus}>{pg[page]||pg.overview}</Layout>;
+  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus}>{pg[page]||pg.overview}</Layout>;
 }
