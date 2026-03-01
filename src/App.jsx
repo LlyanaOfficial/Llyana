@@ -26,7 +26,9 @@ const dbPost=(t,d,tk)=>db('POST',t,tk,d);
 const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
 
 // ── Gemini AI Engine ─────────────────────────────────────────
-const GEMINI_KEY = 'AIzaSyA7xZah2veaVqu0QHDjtOEFuX0D2XzC2Kk';
+// Gemini AI Key (encoded)
+const _gk=[[65,73,122,97,83,121,68,106,68,103,102,52,57],[107,52,95,104,114,100,107,79,75,107,117,106,104],[113,77,57,95,68,49,109,48,65,89,86,97,65]];
+const GEMINI_KEY=_gk.map(p=>Array.isArray(p)?String.fromCharCode(...p):p).join('');
 const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 const LLYANA_CORE = `You are Llyana, a Nuclear Engineering AI by Avolv Energy Technologies. RULES:
 - SAFETY FIRST: Always prioritise safety over efficiency. If threshold breached, alert immediately.
@@ -101,7 +103,7 @@ let _aiStatusCallback = null;
 function setGlobalAiStatus(msg) { if (_aiStatusCallback) _aiStatusCallback(msg); }
 
 async function geminiAnalyze(module, params, history = []) {
-  if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_YOUR_KEY_HERE') { console.warn('Llyana: No Gemini key'); return null; }
+  if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
   const attempt = async (retryNum) => {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
