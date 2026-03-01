@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 
 // ═══════════════════════════════════════════════════════════════
-// LLYANA v3.0 — Nuclear Engineering AI Dashboard
-// Avolv Energy Technologies | Full Supabase Integration
+// LLYANA v4.0 — Nuclear Engineering AI Dashboard
+// Avolv Energy Technologies | Gemini AI + Supabase Integration
 // ═══════════════════════════════════════════════════════════════
 
 const _p=[112,100,102,101,116,105,111,116,105,115,119,117,98,100,116,122,116,119,108,106];
@@ -24,6 +24,49 @@ async function db(method,table,token,body,qs=''){
 const dbGet=(t,tk,qs)=>db('GET',t,tk,null,qs);
 const dbPost=(t,d,tk)=>db('POST',t,tk,d);
 const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
+
+// ── Gemini AI Engine ─────────────────────────────────────────
+const GEMINI_KEY = 'AIzaSyC09pCMTT8xio3bXk0uOxaCX8MooK4KjMg';
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const LLYANA_CORE = `You are Llyana, a Nuclear Engineering AI by Avolv Energy Technologies. RULES:
+- SAFETY FIRST: Always prioritise safety over efficiency. If threshold breached, alert immediately.
+- CONSERVATIVE: When ambiguous, assume worst case. Never assume best case.
+- UNCERTAINTY: State confidence level (0-100%) with every output.
+- ZERO HALLUCINATION: Never fabricate data. If unknown, say unknown.
+- EXPLAINABILITY: Show numbered reasoning steps for HOW you decided.
+- CROSS-DISCIPLINE: Flag impacts on other modules (thermal, materials, safety, operations).
+- BENCHMARKS: Compare against IAEA/OECD standards where applicable.
+Alert levels: SAFE (within range), MONITOR (80% threshold), WARNING (90-99%), CRITICAL (at/beyond limit), UNKNOWN (insufficient data).
+Respond ONLY with valid JSON, no markdown, no backticks, no explanation outside the JSON.`;
+
+const MOD_PROMPTS = {
+  reactor: `REACTOR CORE MODULE. Ranges: Temp 280-600C (optimal 520-560), Pressure 100-180 bar (optimal 145-165), Flow 3500-5000 L/s (optimal 4000-4400).
+Steps: (1) Compare against range, (2) Check trend from history, (3) Cross-check thermal consistency, (4) Check material limits, (5) Recommend.
+JSON shape: {"alert_level":"SAFE|MONITOR|WARNING|CRITICAL","confidence":85,"efficiency":94.2,"temperature_pct":91,"pressure_pct":88,"neutron_flux":"2.4e13","control_rod_position":68,"xenon_level":1.2,"reasoning":[{"step":1,"action":"...","result":"..."}],"recommendations":[{"title":"...","desc":"...","severity":"safe|warning|critical|info"}],"cross_module_impacts":[{"module":"thermal|materials|safety","impact":"..."}],"trend_analysis":"...","benchmarks":"..."}`,
+  thermal: `THERMAL & POWER MODULE. Ranges: Power 0-4000 MW, Coolant 250-320C (optimal 280-300).
+Calculate output, efficiency, thermal_load, heat_rate. Assess steam_generator/turbine/condenser status.
+JSON shape: {"alert_level":"...","confidence":90,"current_output":3100,"efficiency":94.5,"thermal_load":2852,"heat_rate":10680,"steam_generator":"OPTIMAL","turbine":"OPTIMAL","condenser":"OPTIMAL","reasoning":[...],"recommendations":[...],"cross_module_impacts":[...],"trend_analysis":"..."}`,
+  materials: `MATERIALS MODULE. Steps: (1) Compare vs yield strength, (2) Check irradiation embrittlement, (3) Calculate remaining life, (4) Check corrosion, (5) Recommend.
+JSON shape: {"alert_level":"...","confidence":88,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":54,"corrosion_rate":0.4,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
+  energy: `EGM MODULE. Piezoelectric energy from foot traffic. Steps: (1) Calc steps/min/m2, (2) Apply ~3.5% piezo efficiency, (3) Subtract ~12% conditioning losses, (4) Project daily (16hr) & monthly yield, (5) Identify optimal zones.
+JSON shape: {"alert_level":"...","confidence":92,"raw_power_w":15.75,"net_power_w":13.86,"daily_kwh":0.22,"monthly_kwh":6.65,"efficiency_pct":3.08,"annual_revenue_usd":0.80,"reasoning":[...],"recommendations":[...],"trend_analysis":"...","deployment_insights":"..."}`
+};
+
+async function geminiAnalyze(module, params, history = []) {
+  if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_YOUR_KEY_HERE') return null;
+  const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}\n\nAnalyze now. JSON only.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:1500} })
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const txt = d?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!txt) return null;
+    return JSON.parse(txt.replace(/```json\s?/g,'').replace(/```/g,'').trim());
+  } catch(e) { console.error('Gemini:',e); return null; }
+}
 
 const C={bg:'#060608',bgCard:'#0D0D10',bgCardHover:'#131318',bgSidebar:'#0A0A0D',bgInput:'#111115',border:'#1A1A20',borderLight:'#252530',red:'#E63946',redGlow:'rgba(230,57,70,0.35)',redDim:'rgba(230,57,70,0.08)',green:'#10b981',greenDim:'rgba(16,185,129,0.1)',yellow:'#f59e0b',yellowDim:'rgba(245,158,11,0.1)',orange:'#f97316',orangeDim:'rgba(249,115,22,0.1)',cyan:'#06b6d4',cyanDim:'rgba(6,182,212,0.1)',gray:'#6b7280',text:'#E8E8EC',dim:'#8888A0',muted:'#50506A',veryMuted:'#2A2A3A'};
 
@@ -249,52 +292,68 @@ function OverviewPage({onNav,token,sysStatus}){
 function ReactorPage({token,userId}){
   const[ct,setCt]=useState('');const[pr,setPr]=useState('');const[fr,setFr]=useState('');
   const[res,setRes]=useState(null);const[ak,setAk]=useState(0);const[saving,setSaving]=useState(false);const[history,setHistory]=useState([]);const[lastRead,setLastRead]=useState(null);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);const l=d[0];setCt(String(l.core_temp||''));setPr(String(l.pressure||''));setFr(String(l.flow_rate||''));
-      // Auto-analyze last reading
-      const t=+l.core_temp,p=+l.pressure,f=+l.flow_rate;if(!isNaN(t)&&!isNaN(p)&&!isNaN(f)){const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));const recs=[];const tA=getAlertLevel(t,280,600),pA=getAlertLevel(p,100,180),fA=getAlertLevel(f,3500,5000);if(tA==='CRITICAL')recs.push({title:'CRITICAL: Temperature Breach',desc:`Core temp ${t}\u00B0C exceeds safety limits!`,sev:'critical'});else if(tA==='WARNING')recs.push({title:'Temperature Warning',desc:`Core temp ${t}\u00B0C at 90%+ of range.`,sev:'warning'});if(pA==='WARNING'||pA==='CRITICAL')recs.push({title:'Pressure Alert',desc:`Pressure ${p} bar outside optimal.`,sev:'warning'});if(fA!=='SAFE')recs.push({title:'Flow Rate Adjustment',desc:`Flow ${f} L/s outside optimal band.`,sev:'warning'});if(!recs.length)recs.push({title:'All Systems Nominal',desc:'All parameters within optimal range.',sev:'safe'});recs.push({title:'AI Suggestion',desc:`Adjust flow to ${Math.round(f*1.035)} L/s for improved efficiency.`,sev:'info'});const overall=recs.some(r=>r.sev==='critical')?'CRITICAL':recs.some(r=>r.sev==='warning')?'WARNING':'SAFE';setRes({eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall});setAk(1)}
-    }});},[token]);
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[benchInfo,setBenchInfo]=useState('');const[confidence,setConfidence]=useState(null);
+
+  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);setCt(String(d[0].core_temp||''));setPr(String(d[0].pressure||''));setFr(String(d[0].flow_rate||''));}});},[token]);
+
+  const fallback=(t,p,f)=>{
+    const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));
+    const tA=getAlertLevel(t,280,600),pA=getAlertLevel(p,100,180),fA=getAlertLevel(f,3500,5000);
+    const recs=[];if(tA==='CRITICAL')recs.push({title:'CRITICAL: Temperature Breach',desc:`Core temp ${t}\u00B0C exceeds safety limits!`,sev:'critical'});else if(tA==='WARNING')recs.push({title:'Temperature Warning',desc:`Core temp ${t}\u00B0C approaching limits.`,sev:'warning'});
+    if(pA==='WARNING'||pA==='CRITICAL')recs.push({title:'Pressure Alert',desc:`Pressure ${p} bar outside optimal.`,sev:'warning'});if(fA!=='SAFE')recs.push({title:'Flow Rate Adjustment',desc:`Flow ${f} L/s needs adjustment.`,sev:'warning'});
+    if(!recs.length)recs.push({title:'All Systems Nominal',desc:'Parameters within optimal range.',sev:'safe'});
+    const overall=recs.some(r=>r.sev==='critical')?'CRITICAL':recs.some(r=>r.sev==='warning')?'WARNING':'SAFE';
+    return{eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall,nFlux:(2.2+Math.random()*.4).toFixed(1)+'e13',cRod:Math.round(60+Math.random()*15),xenon:+(1+Math.random()*.5).toFixed(1)};
+  };
+
   const run=async()=>{
     const t=parseFloat(ct),p=parseFloat(pr),f=parseFloat(fr);if(isNaN(t)||isNaN(p)||isNaN(f))return;
-    const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));
-    const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));
-    const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));
-    const tA=getAlertLevel(t,280,600),pA=getAlertLevel(p,100,180),fA=getAlertLevel(f,3500,5000);
-    const nFlux=(2.2+Math.random()*.4).toFixed(1)+'e13';const cRod=Math.round(60+Math.random()*15);const xenon=(1+Math.random()*.5).toFixed(1);
-    const recs=[];
-    if(tA==='CRITICAL')recs.push({title:'CRITICAL: Temperature Breach',desc:`Core temp ${t}\u00B0C exceeds safety limits!`,sev:'critical'});
-    else if(tA==='WARNING')recs.push({title:'Temperature Warning',desc:`Core temp ${t}\u00B0C at 90%+ of range.`,sev:'warning'});
-    if(pA==='WARNING'||pA==='CRITICAL')recs.push({title:'Pressure Alert',desc:`Pressure ${p} bar outside optimal.`,sev:'warning'});
-    if(fA!=='SAFE')recs.push({title:'Flow Rate Adjustment',desc:`Flow ${f} L/s outside optimal band.`,sev:'warning'});
-    if(!recs.length)recs.push({title:'All Systems Nominal',desc:'All parameters within optimal range.',sev:'safe'});
-    recs.push({title:'AI Suggestion',desc:`Adjust flow to ${Math.round(f*1.035)} L/s for improved efficiency.`,sev:'info'});
-    const overall=recs.some(r=>r.sev==='critical')?'CRITICAL':recs.some(r=>r.sev==='warning')?'WARNING':'SAFE';
-    setRes({eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall});setAk(k=>k+1);
-    if(token){setSaving(true);
-      const row={core_temp:t,pressure:p,flow_rate:f,efficiency:Math.round(eff*10)/10,alert_level:overall,neutron_flux:nFlux,control_rod_position:cRod,xenon_level:parseFloat(xenon),user_id:userId};
+    setSaving(true);setAiActive(true);
+    const ai=await geminiAnalyze('reactor',{core_temp:t,pressure:p,flow_rate:f},history);
+    let eff,tPct,pPct,recs,overall,nFlux,cRod,xenon;
+    if(ai){
+      eff=+(ai.efficiency||95);tPct=+(ai.temperature_pct||90);pPct=+(ai.pressure_pct||88);overall=ai.alert_level||'SAFE';
+      recs=(ai.recommendations||[]).map(r=>({title:r.title,desc:r.desc||r.description,sev:r.severity||'info'}));
+      if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
+      nFlux=ai.neutron_flux||(2.2+Math.random()*.4).toFixed(1)+'e13';cRod=ai.control_rod_position||Math.round(60+Math.random()*15);xenon=ai.xenon_level||+(1+Math.random()*.5).toFixed(1);
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(ai.trend_analysis||'');setBenchInfo(ai.benchmarks||'');
+    } else {
+      const fb=fallback(t,p,f);eff=fb.eff;tPct=fb.tPct;pPct=fb.pPct;recs=fb.recs;overall=fb.overall;nFlux=fb.nFlux;cRod=fb.cRod;xenon=fb.xenon;
+      setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');setBenchInfo('');
+    }
+    setRes({eff,tPct,pPct,recs,overall});setAk(k=>k+1);setAiActive(false);
+    if(token){
+      const row={core_temp:t,pressure:p,flow_rate:f,efficiency:eff,alert_level:overall,neutron_flux:String(nFlux),control_rod_position:typeof cRod==='number'?cRod:parseInt(cRod),xenon_level:typeof xenon==='number'?xenon:parseFloat(xenon),user_id:userId};
       await dbPost('nuclear_reactor_readings',row,token);
       if(overall!=='SAFE')await dbPost('alerts',{venture:'nuclear',module:'reactor_core',title:`Reactor ${overall}`,description:`Temp:${t}\u00B0C P:${p}bar F:${f}L/s`,alert_level:overall,status:'active',user_id:userId},token);
       const fresh=await dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10');if(fresh){setHistory(fresh);setLastRead(fresh[0])}
-      setSaving(false);}
+    }setSaving(false);
   };
   const oc=res?.overall==='CRITICAL'?C.red:res?.overall==='WARNING'?C.orange:C.green;
   const nf=lastRead?.neutron_flux||'-';const cr=lastRead?.control_rod_position?lastRead.control_rod_position+'%':'-';const xl=lastRead?.xenon_level?lastRead.xenon_level+' ppm':'-';
   return(<div><PH red="Reactor Core" white="Analysis" sub="Real-time optimization and analysis"/>
-    {res&&<div style={{background:oc+'10',border:`1px solid ${oc}25`,borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between',animation:'fadeUp .3s'}}><div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:'50%',background:oc,animation:'pulse 2s infinite'}}/><span style={{fontSize:'12px',fontWeight:600,color:oc}}>Status: {res.overall}</span></div><span style={{fontSize:'10px',color:C.dim,fontFamily:'monospace'}}>Readings: {history.length}</span></div>}
+    {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is analyzing...</span></div>}
+    {res&&!aiActive&&<div style={{background:oc+'10',border:`1px solid ${oc}25`,borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between',animation:'fadeUp .3s'}}><div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:'50%',background:oc,animation:'pulse 2s infinite'}}/><span style={{fontSize:'12px',fontWeight:600,color:oc}}>Status: {res.overall}</span>{confidence&&<span style={{fontSize:'10px',color:C.dim,marginLeft:8,fontFamily:'monospace'}}>Confidence: {confidence}%</span>}</div><span style={{fontSize:'10px',color:C.dim,fontFamily:'monospace'}}>Readings: {history.length}</span></div>}
     {!res&&!history.length&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,fontSize:'12px',color:C.cyan}}>No readings yet. Enter parameters and run analysis to get started.</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <Card title="Core Performance" delay={.1}>{res?<div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={res.eff} label="Efficiency"/><Gauge value={res.tPct} label="Temperature"/><Gauge value={res.pPct} label="Pressure"/></div>:<div style={{padding:30,textAlign:'center',color:C.muted,fontSize:'12px'}}>Run analysis to see gauges</div>}
+        <Card title="Core Performance" delay={.1}>{res?<div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={Math.round(res.eff)} label="Efficiency"/><Gauge value={Math.round(res.tPct)} label="Temperature"/><Gauge value={Math.round(res.pPct)} label="Pressure"/></div>:<div style={{padding:30,textAlign:'center',color:C.muted,fontSize:'12px'}}>Run analysis to see gauges</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,borderTop:`1px solid ${C.border}`,paddingTop:16}}>{[['Neutron Flux',nf,'n/cm\u00B2s'],['Control Rod',cr,'Position'],['Xenon',xl,'Level']].map(([l,v,u])=>(<div key={l} className="card-hover" style={{background:C.bg,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`}}><div style={{fontSize:'9px',color:C.muted,textTransform:'uppercase'}}>{l}</div><div style={{fontFamily:'monospace',fontSize:'16px',fontWeight:700,margin:'4px 0 2px'}}>{v}</div><div style={{fontSize:'8px',color:C.muted}}>{u}</div></div>))}</div>
         </Card>
         {res&&<Card title="AI Insights" delay={.2}><div key={ak}>{res.recs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
-        {history.length>1&&<Card title="Efficiency History" delay={.3}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Last readings"/></Card>}
+        {reasoning.length>0&&<Card title="Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{r.action}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{r.result}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`,animation:`fadeUp .3s ease-out ${i*.1}s both`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{c.impact}</span></div>))}</div></Card>}
+        {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
+        {benchInfo&&<Card title="IAEA Benchmark Check" delay={.4}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{benchInfo}</div></Card>}
+        {history.length>1&&<Card title="Efficiency History" delay={.45}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Last readings"/></Card>}
       </div>
       <Card title="Parameters" delay={.15}>
         <Inp label="Core Temperature" value={ct} onChange={setCt} unit={"\u00B0C"} required min={280} max={600} hint="Range: 280\u2013600\u00B0C"/>
         <Inp label="Pressure" value={pr} onChange={setPr} unit="bar" required min={100} max={180} hint="Range: 100\u2013180 bar"/>
         <Inp label="Flow Rate" value={fr} onChange={setFr} unit="L/s" required min={3500} max={5000} hint="Range: 3500\u20135000 L/s"/>
-        <Btn onClick={run} disabled={saving}>{saving?'Processing...':'Run Analysis'}</Btn>
+        <Btn onClick={run} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Analysis'}</Btn>
         <Btn outline style={{marginTop:8}} onClick={()=>{setCt('550');setPr('155');setFr('4200')}}>Reset Defaults</Btn>
+        {confidence&&<div style={{marginTop:12,padding:'8px 12px',background:C.cyanDim,borderRadius:8,border:`1px solid ${C.cyan}15`}}><div style={{fontSize:'10px',color:C.cyan,fontWeight:600}}>AI CONFIDENCE</div><div style={{fontFamily:'monospace',fontSize:'20px',fontWeight:700,color:C.cyan}}>{confidence}%</div></div>}
       </Card>
     </div>
   </div>);
@@ -305,24 +364,40 @@ function ReactorPage({token,userId}){
 // ═══════════════════════════════════════════════════════════════
 function ThermalPage({token,userId}){
   const[tp,setTp]=useState('3200');const[ct,setCt]=useState('290');const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[confidence,setConfidence]=useState(null);
   useEffect(()=>{if(!token)return;dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20').then(d=>{if(d?.length){setReadings(d);setTp(String(d[0].target_power||3200));setCt(String(d[0].coolant_temp||290))}});},[token]);
-  const save=async()=>{setSaving(true);const t=parseFloat(tp),c=parseFloat(ct);if(isNaN(t)||isNaN(c)){setSaving(false);return}
-    const eff=Math.min(99,Math.max(70,94-(Math.abs(t-3200)*.002)-(Math.abs(c-290)*.1)));const out=Math.round(t*(eff/100));const therm=Math.round(out*.92);const hr=Math.round(10500+Math.random()*500);
-    await dbPost('nuclear_thermal_readings',{target_power:t,current_output:out,coolant_temp:c,efficiency:Math.round(eff*10)/10,thermal_load:therm,heat_rate:hr,steam_generator_status:'OPTIMAL',turbine_status:eff>85?'OPTIMAL':'WARNING',condenser_status:'OPTIMAL',user_id:userId},token);
+  const save=async()=>{setSaving(true);setAiActive(true);const t=parseFloat(tp),c=parseFloat(ct);if(isNaN(t)||isNaN(c)){setSaving(false);setAiActive(false);return}
+    const ai=await geminiAnalyze('thermal',{target_power:t,coolant_temp:c},readings);
+    let eff,out,therm,hr,sgSt,tSt,cSt;
+    if(ai){
+      eff=+(ai.efficiency||94);out=+(ai.current_output||Math.round(t*(eff/100)));therm=+(ai.thermal_load||Math.round(out*.92));hr=+(ai.heat_rate||10600);
+      sgSt=ai.steam_generator||'OPTIMAL';tSt=ai.turbine||'OPTIMAL';cSt=ai.condenser||'OPTIMAL';
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(ai.trend_analysis||'');
+    } else {
+      eff=Math.min(99,Math.max(70,94-(Math.abs(t-3200)*.002)-(Math.abs(c-290)*.1)));out=Math.round(t*(eff/100));therm=Math.round(out*.92);hr=Math.round(10500+Math.random()*500);
+      sgSt='OPTIMAL';tSt=eff>85?'OPTIMAL':'WARNING';cSt='OPTIMAL';
+      setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');
+    }
+    setAiActive(false);
+    await dbPost('nuclear_thermal_readings',{target_power:t,current_output:out,coolant_temp:c,efficiency:Math.round(eff*10)/10,thermal_load:therm,heat_rate:hr,steam_generator_status:sgSt,turbine_status:tSt,condenser_status:cSt,user_id:userId},token);
     const fresh=await dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20');if(fresh)setReadings(fresh);setSaving(false);};
   const last=readings[0];
   return(<div><PH red="Thermal & Power" white="Calculations" sub="Real-time power output and thermal performance"/>
-    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Output" value={last?Math.round(+last.current_output)+'':'-'} sub="MW" delay={.05}/><StatCard label="Efficiency" value={last?(+last.efficiency).toFixed(1)+'%':'-'} accent={C.green} delay={.1}/><StatCard label="Thermal Load" value={last?Math.round(+last.thermal_load)+'':'-'} sub="MWh" delay={.15}/><StatCard label="Heat Rate" value={last?Math.round(+last.heat_rate)+'':'-'} sub="BTU/kWh" delay={.2}/></div>
+    {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is analyzing thermal data...</span></div>}
+    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Output" value={last?Math.round(+last.current_output)+'':'-'} sub="MW" delay={.05}/><StatCard label="Efficiency" value={last?(+last.efficiency).toFixed(1)+'%':'-'} accent={C.green} delay={.1}/><StatCard label="Thermal Load" value={last?Math.round(+last.thermal_load)+'':'-'} sub="MWh" delay={.15}/><StatCard label="Heat Rate" value={last?Math.round(+last.heat_rate)+'':'-'} sub="BTU/kWh" delay={.2}/>{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.25}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Power Output History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.current_output||0).reverse()} color={C.red} showArea label={`Last ${readings.length} readings`}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency||0).reverse()} color={C.green} showArea label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{r.action}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{r.result}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{c.impact}</span></div>))}</div></Card>}
+        {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
       </div>
       <Card title="Power Control" delay={.15}>
         <Inp label="Target Power" value={tp} onChange={setTp} unit="MW" required min={0} max={4000}/>
         <Inp label="Coolant Temp" value={ct} onChange={setCt} unit={"\u00B0C"} required min={250} max={320}/>
-        <Btn onClick={save} disabled={saving}>{saving?'Processing...':'Run Calculation'}</Btn>
-        <div style={{marginTop:16,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{['Steam Generator','Turbine','Condenser'].map(c=><div key={c} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',fontSize:'12px'}}><span style={{color:C.dim}}>{c}</span><span style={{color:last&&(c==='Turbine'&&(+last.efficiency)<85)?C.yellow:C.green,fontWeight:600,fontFamily:'monospace',fontSize:'11px'}}>{last&&c==='Turbine'&&(+last.efficiency)<85?'WARNING':'OPTIMAL'}</span></div>)}</div>
+        <Btn onClick={save} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Calculation'}</Btn>
+        <div style={{marginTop:16,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{['Steam Generator','Turbine','Condenser'].map(c=><div key={c} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',fontSize:'12px'}}><span style={{color:C.dim}}>{c}</span><span style={{color:last&&(c==='Turbine'&&last.turbine_status==='WARNING')?C.yellow:last&&(last[c.toLowerCase().replace(/ /g,'_')+'_status']==='WARNING')?C.yellow:C.green,fontWeight:600,fontFamily:'monospace',fontSize:'11px'}}>{last?last[c==='Steam Generator'?'steam_generator_status':c==='Turbine'?'turbine_status':'condenser_status']||'OPTIMAL':'OPTIMAL'}</span></div>)}</div>
       </Card>
     </div>
   </div>);
@@ -456,28 +531,43 @@ function SafetyPage({token,userId}){
 function EnergyPage({token,userId}){
   const[ft,setFt]=useState('45');const[area,setArea]=useState('10');const[loc,setLoc]=useState('Main Entrance');
   const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);const[model,setModel]=useState('ai');
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[deployInsights,setDeployInsights]=useState('');const[confidence,setConfidence]=useState(null);
   useEffect(()=>{if(!token)return;dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12').then(d=>{if(d?.length){setReadings(d);setFt(String(d[0].foot_traffic_per_min||45));setArea(String(d[0].area_sqm||10));setLoc(d[0].location||'Main Entrance')}});},[token]);
-  const calc=async()=>{const f=parseFloat(ft),a=parseFloat(area);if(isNaN(f)||isNaN(a))return;setSaving(true);
-    const raw=f*a*3.5*.01;const net=raw*(1-.12);const daily=net*16/1000;const monthly=daily*30;const eff=3.5*(1-.12)*(1-(Math.random()*.02));
+  const calc=async()=>{const f=parseFloat(ft),a=parseFloat(area);if(isNaN(f)||isNaN(a))return;setSaving(true);setAiActive(true);
+    const ai=await geminiAnalyze('energy',{location:loc,foot_traffic_per_min:f,area_sqm:a},readings);
+    let raw,net,daily,monthly,eff;
+    if(ai){
+      raw=+(ai.raw_power_w||(f*a*3.5*.01));net=+(ai.net_power_w||(raw*.88));daily=+(ai.daily_kwh||(net*16/1000));monthly=+(ai.monthly_kwh||(daily*30));eff=+(ai.efficiency_pct||3.08);
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setTrendInfo(ai.trend_analysis||'');setDeployInsights(ai.deployment_insights||'');
+    } else {
+      raw=f*a*3.5*.01;net=raw*(1-.12);daily=net*16/1000;monthly=daily*30;eff=3.5*(1-.12)*(1-(Math.random()*.02));
+      setConfidence(null);setReasoning([]);setTrendInfo('');setDeployInsights('');
+    }
+    setAiActive(false);
     await dbPost('nuclear_egm_data',{location:loc,foot_traffic_per_min:f,area_sqm:a,raw_power_w:Math.round(raw*100)/100,net_power_w:Math.round(net*100)/100,daily_kwh:Math.round(daily*100)/100,monthly_kwh:Math.round(monthly*100)/100,efficiency_pct:Math.round(eff*100)/100,mat_condition:'good',user_id:userId},token);
     const fresh=await dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12');if(fresh)setReadings(fresh);setSaving(false);};
   const last=readings[0];
+  const annualRev=last?((+last.monthly_kwh)*12*0.12).toFixed(2):'-';
   return(<div><PH red="Energy Yield" white="Projections" sub="EGM mat yield projections and forecast"/>
-    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Daily Yield" value={last?(+last.daily_kwh).toFixed(1)+'':'-'} sub="kWh" delay={.05}/><StatCard label="Monthly" value={last?Math.round(+last.monthly_kwh)+'':'-'} sub="kWh" delay={.1}/><StatCard label="Net Power" value={last?(+last.net_power_w).toFixed(1)+'':'-'} sub="W" delay={.15}/><StatCard label="Efficiency" value={last?(+last.efficiency_pct).toFixed(1)+'%':'-'} accent={C.green} delay={.2}/></div>
+    {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is analyzing EGM data...</span></div>}
+    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Daily Yield" value={last?(+last.daily_kwh).toFixed(2)+'':'-'} sub="kWh" delay={.05}/><StatCard label="Monthly" value={last?(+last.monthly_kwh).toFixed(1)+'':'-'} sub="kWh" delay={.1}/><StatCard label="Net Power" value={last?(+last.net_power_w).toFixed(1)+'':'-'} sub="W" delay={.15}/><StatCard label="Annual Revenue" value={annualRev!=='-'?'$'+annualRev:'-'} sub="USD" accent={C.green} delay={.2}/>{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.25}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Yield History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.monthly_kwh||0).reverse()} color={C.red} showArea label="Monthly kWh"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency_pct||0).reverse()} color={C.green} label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{r.action}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{r.result}</div></div></div>))}</div></Card>}
+        {trendInfo&&<Card title="Traffic & Yield Trends" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
+        {deployInsights&&<Card title="Deployment Insights" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{deployInsights}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="EGM Parameters" delay={.15}>
           <Inp label="Location" value={loc} onChange={setLoc} required/>
           <Inp label="Foot Traffic" value={ft} onChange={setFt} unit="steps/min" required min={1} max={200}/>
           <Inp label="Mat Area" value={area} onChange={setArea} unit="m\u00B2" required min={1} max={500}/>
-          <Btn onClick={calc} disabled={saving}>{saving?'Processing...':'Run Calculation'}</Btn>
+          <Btn onClick={calc} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Calculation'}</Btn>
         </Card>
         <Card title="Projection Model" delay={.25}>
-          {[{id:'ai',l:'AI Optimized',d:'ML-based projection'},{id:'linear',l:'Linear Regression',d:'Traditional'},{id:'hybrid',l:'Hybrid',d:'AI + historical'}].map(m=>(
+          {[{id:'ai',l:'AI Optimized',d:'Gemini-powered projection'},{id:'linear',l:'Linear Regression',d:'Traditional'},{id:'hybrid',l:'Hybrid',d:'AI + historical'}].map(m=>(
             <div key={m.id} onClick={()=>setModel(m.id)} style={{display:'flex',gap:10,alignItems:'center',padding:'8px 0',cursor:'pointer'}}>
               <div style={{width:16,height:16,borderRadius:'50%',border:`2px solid ${model===m.id?C.red:C.borderLight}`,display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s'}}>{model===m.id&&<div style={{width:8,height:8,borderRadius:'50%',background:C.red}}/>}</div>
               <div><div style={{fontSize:'12px',fontWeight:500}}>{m.l}</div><div style={{fontSize:'9px',color:C.muted}}>{m.d}</div></div>
