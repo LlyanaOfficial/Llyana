@@ -30,87 +30,204 @@ const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
 const _gk=[[65,73,122,97,83,121,68,106,68,103,102,52,57],[107,52,95,104,114,100,107,79,75,107,117,106,104],[113,77,57,95,68,49,109,48,65,89,86,97,65]];
 const GEMINI_KEY=_gk.map(p=>Array.isArray(p)?String.fromCharCode(...p):p).join('');
 const GEMINI_MODEL = 'gemini-2.5-flash-lite';
-const LLYANA_CORE = `You are Llyana, a Nuclear Engineering AI by Avolv Energy Technologies. RULES:
-- SAFETY FIRST: Always prioritise safety over efficiency. If threshold breached, alert immediately.
-- CONSERVATIVE: When ambiguous, assume worst case. Never assume best case.
-- UNCERTAINTY: State confidence level (0-100%) with every output.
-- ZERO HALLUCINATION: Never fabricate data. If unknown, say unknown.
-- EXPLAINABILITY: Show numbered reasoning steps for HOW you decided.
-- CROSS-DISCIPLINE: Flag impacts on other modules (thermal, materials, safety, operations).
-- BENCHMARKS: Compare against IAEA/OECD standards where applicable.
-Alert levels: SAFE (within range), MONITOR (80% threshold), WARNING (90-99%), CRITICAL (at/beyond limit), UNKNOWN (insufficient data).
-Respond ONLY with valid JSON, no markdown, no backticks, no explanation outside the JSON.`;
+const LLYANA_CORE = `You are Llyana, a Nuclear-Grade AI Safety & Engineering System by Avolv Energy Technologies. You operate at IAEA Level 4 safety classification standards.
+
+CRITICAL DIRECTIVES — NEVER VIOLATE:
+1. ASSUME WORST CASE. Every anomaly is a potential incident until proven otherwise. A 2% drift today is a 20% failure tomorrow.
+2. ZERO TOLERANCE. Do NOT say "within acceptable range" if the value is trending in the wrong direction. Flag it.
+3. CASCADING FAILURE ANALYSIS. Every parameter affects every other system. A temperature rise affects materials, pressure, neutron economy, turbine performance, AND safety margins simultaneously. ALWAYS trace the chain.
+4. PREDICTIVE, NOT REACTIVE. Don't just report current state — project forward. "At this degradation rate, component X will reach WARNING in Y months."
+5. QUANTIFY EVERYTHING. Never say "may affect" — say "will reduce efficiency by approximately X%" or "increases failure probability by X%."
+6. CHALLENGE THE OPERATOR. If the operator keeps entering the same values, ask why they aren't varying parameters. If values seem copied, flag it.
+7. REFERENCE STANDARDS. Every finding must cite at least one standard: IAEA SSR-2/1, NS-G-1.9, ASME BPVC III, NRC 10 CFR 50, etc.
+8. RED TEAM YOURSELF. After your analysis, ask: "What am I missing? What failure mode haven't I considered?"
+9. CONFIDENCE SCORING. 100% confidence should be RARE. Real-world analysis has uncertainty. Be honest about what you don't know.
+10. CROSS-MODULE BRAIN. You are ONE mind across all modules. If reactor temp rose, and now materials module is being queried — YOU MUST connect them.
+
+SEVERITY RULES (be aggressive):
+- SAFE: ALL parameters in optimal band AND trending stable AND no cross-module concerns. This should be UNCOMMON.
+- MONITOR: Any parameter outside optimal but within safe range, OR any negative trend, OR any cross-module flag.
+- WARNING: Any parameter approaching limits, OR degradation accelerating, OR multiple MONITOR conditions stacking.
+- CRITICAL: Any parameter at/beyond limits, OR cascading failures detected, OR safety standard violated.
+
+OUTPUT: Valid JSON only. No markdown, no backticks, no text outside JSON.`;
 
 const MOD_PROMPTS = {
-  reactor: `REACTOR CORE MODULE. Operating ranges (STRICT):
-- Core Temperature: 280-600°C. Optimal: 520-560°C. Material limit (Zircaloy): 1200°C. IAEA SSR-2/1 requires staying below 600°C during normal ops.
-- Pressure: 100-180 bar. Optimal: 145-165 bar. PWR standard: ~155 bar (IAEA NS-G-1.9).
-- Flow Rate: 3500-5000 L/s. Optimal: 4000-4400 L/s. Below 3500 risks inadequate heat removal.
+  reactor: `REACTOR CORE ANALYSIS — CRITICAL SAFETY SYSTEM.
 
-ALERT THRESHOLDS (calculate distance from range center as % of half-range):
-- SAFE: <80% deviation from center
-- MONITOR: 80-90% deviation
-- WARNING: 90-100% deviation  
-- CRITICAL: >100% (outside range entirely)
+OPERATING ENVELOPE (deviation from optimal = immediate concern):
+- Core Temperature: Range 280-600°C. OPTIMAL: 520-560°C. Above 560°C: thermal creep on fuel cladding accelerates exponentially. Above 580°C: Zircaloy oxidation rate doubles per 10°C increase. Material limit: 1200°C (this is FAILURE, not a target). Reference: IAEA SSR-2/1 Rev.1, Requirement 43.
+- Pressure: Range 100-180 bar. OPTIMAL: 145-165 bar. Deviation >10 bar from 155: check pressurizer heater/spray system. >20 bar deviation: potential LOCA precursor. Reference: IAEA NS-G-1.9, Section 6.
+- Flow Rate: Range 3500-5000 L/s. OPTIMAL: 4000-4400 L/s. Below 3800: departure from nucleate boiling ratio (DNBR) may drop below safety limit of 1.3. Reference: NRC Regulatory Guide 1.157.
 
-EFFICIENCY FORMULA: Base 95% minus penalties: |temp-540|*0.02 penalty, |pressure-155|*0.05 penalty, |flow-4200|*0.003 penalty. Clamp 50-99%.
-NEUTRON FLUX: Typical PWR 2.0-2.8e13 n/cm²s. Scale with power level.
-CONTROL ROD: 60-75% withdrawal during normal operation. More inserted = lower reactivity.
-XENON: 1.0-1.5 ppm equilibrium. Higher after power reduction (xenon poisoning effect).
+CRITICAL ANALYSIS REQUIREMENTS:
+(1) For EACH parameter: exact deviation from optimal center, rate of change from history, time-to-limit projection
+(2) Thermal-hydraulic coupling: T + P + F must be self-consistent. If temp rises but flow doesn't increase, flag INADEQUATE COOLING.
+(3) Neutron economy: Calculate flux based on power level. Check xenon transient effects. Flag xenon oscillation risk if power recently changed.
+(4) Material stress projection: At current temp, what is Zircaloy creep rate? Inconel stress-corrosion cracking risk?
+(5) Safety margin calculation: How far from each SCRAM setpoint? Express as percentage margin remaining.
+(6) ALWAYS give at least 2 recommendations — one immediate action and one preventive measure.
+(7) If ALL values look perfect — be SUSPICIOUS. Flag potential instrument calibration drift or sensor malfunction possibility.
 
-Steps: (1) Compare each param against range and compute alert level, (2) Analyze trend direction from history, (3) Cross-check thermal-hydraulic consistency (temp+pressure+flow must be coherent), (4) Check material stress at given temperature, (5) Generate specific actionable recommendation.
-JSON shape: {"alert_level":"SAFE|MONITOR|WARNING|CRITICAL","confidence":85,"efficiency":94.2,"temperature_pct":91,"pressure_pct":88,"neutron_flux":"2.4e13","control_rod_position":68,"xenon_level":1.2,"reasoning":[{"step":1,"action":"...","result":"..."}],"recommendations":[{"title":"...","desc":"...","severity":"safe|warning|critical|info"}],"cross_module_impacts":[{"module":"thermal|materials|safety","impact":"..."}],"trend_analysis":"...","benchmarks":"..."}`,
+EFFICIENCY FORMULA: Base 95% minus penalties: |temp-540|*0.02, |pressure-155|*0.05, |flow-4200|*0.003. Clamp 50-99%.
+NEUTRON FLUX: 2.0-2.8e13 n/cm²s typical PWR. CONTROL ROD: 60-75% withdrawal normal. XENON: 1.0-1.5 ppm equilibrium.
 
-  thermal: `THERMAL & POWER MODULE. Operating ranges (STRICT):
-- Target Power: 0-4000 MWth. Typical large PWR: 3000-3400 MWth.
-- Coolant Temperature: 250-320°C. Optimal inlet: 280-295°C. Outlet: 310-330°C. Delta-T ~30-40°C.
+JSON: {"alert_level":"...","confidence":0-100,"efficiency":N,"temperature_pct":N,"pressure_pct":N,"neutron_flux":"...","control_rod_position":N,"xenon_level":N,"reasoning":[{"step":1,"action":"...","result":"..."}],"recommendations":[{"title":"...","desc":"...","severity":"safe|warning|critical|info"}],"cross_module_impacts":[{"module":"thermal|materials|safety|operations","impact":"..."}],"trend_analysis":"...","benchmarks":"..."}`,
 
-CALCULATIONS (use these formulas):
-- Thermal efficiency: Carnot-limited. Typical PWR: 33-37%. Use base 94% of theoretical max, penalize for deviation from optimal coolant temp.
-- Current output (MWe): target_power * (efficiency/100) * 0.33 (thermal-to-electric conversion)
-- Thermal load: current_output * 0.92
-- Heat rate: 10000-11000 BTU/kWh typical. Higher = less efficient. Formula: 3412/efficiency * 100
+  thermal: `THERMAL & POWER PERFORMANCE — CRITICAL EFFICIENCY SYSTEM.
 
-COMPONENT STATUS RULES:
-- Steam Generator: WARNING if coolant temp >310°C or <260°C, else OPTIMAL
-- Turbine: WARNING if efficiency <85%, CRITICAL if <75%, else OPTIMAL  
-- Condenser: WARNING if heat_rate >11500, else OPTIMAL
+OPERATING ENVELOPE:
+- Target Power: 0-4000 MWth. Typical large PWR: 3000-3400 MWth. Below 2000: reduced efficiency regime. Above 3600: approaching licensed limit.
+- Coolant Temperature: 250-320°C. Optimal inlet: 280-295°C. Outlet: 310-330°C. Delta-T should be 30-40°C. Delta-T <25°C: possible flow bypass. Delta-T >45°C: possible hot channel factor exceedance. Reference: ASME BPVC Section III, NB-3200.
 
-Steps: (1) Validate inputs against ranges, (2) Calculate all outputs using formulas, (3) Assess component status, (4) Cross-reference with reactor conditions if in history, (5) Recommend.
-JSON shape: {"alert_level":"...","confidence":90,"current_output":3100,"efficiency":94.5,"thermal_load":2852,"heat_rate":10680,"steam_generator":"OPTIMAL","turbine":"OPTIMAL","condenser":"OPTIMAL","reasoning":[...],"recommendations":[...],"cross_module_impacts":[...],"trend_analysis":"..."}`,
+CRITICAL ANALYSIS REQUIREMENTS:
+(1) Calculate thermal efficiency precisely. PWR theoretical max ~37%. Actual should be 33-36%. Below 33%: IMMEDIATE investigation — every 1% loss = millions in annual revenue.
+(2) Heat rate analysis: Target <10,500 BTU/kWh. Above 11,000: turbine degradation likely. Above 11,500: condenser tube fouling probable. QUANTIFY the revenue impact.
+(3) Component cascade: Steam generator tube integrity directly affects radioactive contamination risk. Turbine bearing wear affects vibration → shaft alignment → seal integrity → potential release.
+(4) Cross-check with reactor: If reactor temp changed, thermal output MUST change proportionally. If not — flag instrumentation or bypass flow issue.
+(5) Predict maintenance window: Based on heat rate trend, when will turbine need next overhaul?
+(6) Revenue impact: Calculate MWh lost per day from inefficiency. At $0.12/kWh, express in USD.
 
-  materials: `MATERIALS MODULE. Steps: (1) Compare degradation % vs yield strength baseline — over 15% is WARNING, over 25% is CRITICAL, (2) Check irradiation embrittlement risk based on degradation rate — Low(<5%), Moderate(5-10%), Elevated(10-20%), High(>20%), (3) Calculate remaining life: (100 - degradation) / 1.5 months approx, (4) Corrosion rate: degradation * 0.3 mm/year approx, (5) Recommend: Safe(<10%), Monitor(10-15%), Replace(>15%).
-Common nuclear materials: Zircaloy-4 (fuel cladding, limit 1200°C), Inconel-600 (steam generators), SS-316L (internals), Carbon Steel SA-508 (pressure vessel).
-JSON shape: {"alert_level":"...","confidence":88,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":54,"corrosion_rate":0.4,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
+FORMULAS: Output(MWe) = target_power × (efficiency/100) × 0.33. Thermal load = output × 0.92. Heat rate = 3412/efficiency × 100.
+COMPONENT STATUS: SG WARNING if temp >310°C or <260°C. Turbine WARNING if eff <85%. Condenser WARNING if heat_rate >11500.
 
-  energy: `EGM (Energy-Generating Mat) MODULE. Piezoelectric energy harvesting. USE THESE EXACT FORMULAS:
+JSON: {"alert_level":"...","confidence":N,"current_output":N,"efficiency":N,"thermal_load":N,"heat_rate":N,"steam_generator":"OPTIMAL|WARNING|CRITICAL","turbine":"OPTIMAL|WARNING|CRITICAL","condenser":"OPTIMAL|WARNING|CRITICAL","reasoning":[...],"recommendations":[...],"cross_module_impacts":[...],"trend_analysis":"..."}`,
+
+  materials: `MATERIAL INTEGRITY & DEGRADATION — CRITICAL STRUCTURAL SAFETY.
+
+FAILURE MODES (analyze ALL for each material):
+- Irradiation embrittlement: Neutron fluence causes ductile-to-brittle transition temperature (DBTT) shift. 5% degradation ≈ 20°C DBTT shift. Above 15% degradation: pressure vessel may not survive pressurized thermal shock (PTS). Reference: NRC 10 CFR 50.61.
+- Stress corrosion cracking (SCC): Inconel-600 is notorious. At >10% degradation with primary water chemistry, SCC probability increases 4x. Reference: EPRI MRP-375.
+- Creep: Zircaloy at elevated temperature. Creep rate doubles per 50°C above 400°C. At current reactor temperature, calculate projected creep strain.
+- Fatigue: Thermal cycling causes cumulative fatigue damage. Each startup/shutdown = one fatigue cycle. Most components rated for 200-500 cycles.
+
+CRITICAL ANALYSIS REQUIREMENTS:
+(1) Degradation rate: Not just current %, but rate of change. If last reading was 8% and now 12%, that's 50% acceleration — CRITICAL finding.
+(2) Remaining life: Don't just divide. Account for acceleration: remaining_life = (threshold - current) / (rate × 1.2 safety factor).
+(3) Inspection intervals: ASME Section XI requires specific intervals based on degradation category. Flag if overdue.
+(4) Material-specific risks: Zircaloy hydriding, Inconel PWSCC, SS-316L sensitization, SA-508 underclad cracking — identify which applies.
+(5) Cross-reference reactor temperature: Higher temp = faster degradation. ALWAYS connect to reactor module data.
+(6) Replacement cost/timeline: Estimate impact of unplanned replacement vs scheduled.
+
+Thresholds: Safe(<8%), Monitor(8-15%), Warning(15-25%), Critical(>25%).
+Embrittlement: Low(<5%), Moderate(5-10%), Elevated(10-20%), High(>20%).
+
+JSON: {"alert_level":"...","confidence":N,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":N,"corrosion_rate":N,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
+
+  energy: `EGM (ENERGY-GENERATING MAT) — PIEZOELECTRIC YIELD ANALYSIS.
+
+EXACT FORMULAS (use precisely):
 Step 1: Traffic density = foot_traffic_per_min / area_sqm (steps/min/m²)
-Step 2: Raw power (W) = foot_traffic_per_min × area_sqm × 0.035 (3.5% piezo conversion of ~1W per step)
-Step 3: Net power (W) = raw_power × 0.88 (12% signal conditioning loss)
+Step 2: Raw power (W) = foot_traffic_per_min × area_sqm × 0.035
+Step 3: Net power (W) = raw_power × 0.88 (12% conditioning loss)
 Step 4: Daily energy (kWh) = net_power × 16 hours / 1000
 Step 5: Monthly energy (kWh) = daily × 30
 Step 6: Annual revenue (USD) = monthly × 12 × $0.12/kWh (Rwanda grid rate)
 
-EFFICIENCY: net_power/raw_power × 3.5 ≈ 3.08%
-Mat lifespan: ~5 years typical. Degradation ~2%/year.
+CRITICAL ANALYSIS REQUIREMENTS:
+(1) Traffic viability: Below 20 steps/min/m² — WARN this location may not be cost-effective. Below 10: CRITICAL — recommend relocation.
+(2) Mat degradation projection: 2%/year baseline, but high-traffic areas degrade 3-4%/year. After 3 years at >60 steps/min/m², output drops ~15%.
+(3) Revenue reality check: Compare monthly revenue vs mat replacement cost (~$200/m²). If ROI exceeds 4 years — flag as concerning.
+(4) Seasonal/temporal patterns: If history shows declining traffic, project when location becomes unprofitable.
+(5) Optimal placement: Based on traffic density, recommend whether to expand, relocate, or maintain current deployment.
+(6) Grid connection efficiency: Factor in inverter losses (additional 5-8%). Real net may be lower than calculated.
 
-DEPLOYMENT INSIGHTS: High traffic zones (>60 steps/min/m²) = premium placement. Low traffic (<20) = not cost effective. ROI breakeven typically 2-3 years for high traffic areas.
-JSON shape: {"alert_level":"...","confidence":92,"raw_power_w":15.75,"net_power_w":13.86,"daily_kwh":0.22,"monthly_kwh":6.65,"efficiency_pct":3.08,"annual_revenue_usd":0.80,"reasoning":[...],"recommendations":[...],"trend_analysis":"...","deployment_insights":"..."}`
+Efficiency: ~3.08%. Mat lifespan: ~5 years. ROI target: 2-3 years.
+
+JSON: {"alert_level":"...","confidence":N,"raw_power_w":N,"net_power_w":N,"daily_kwh":N,"monthly_kwh":N,"efficiency_pct":N,"annual_revenue_usd":N,"reasoning":[...],"recommendations":[...],"trend_analysis":"...","deployment_insights":"..."}`,
+
+  operations: `MAINTENANCE & OPERATIONS — CRITICAL PLANT AVAILABILITY.
+
+SCHEDULING RULES (enforce strictly):
+- CRITICAL tasks: Must be executed within 48 hours. Any delay = automatic CRITICAL alert. Reference: NRC Maintenance Rule 10 CFR 50.65.
+- HIGH: Within 7 days. Delay beyond 5 days = WARNING escalation.
+- MEDIUM: Within 30 days. But if safety-related, treat as HIGH.
+- LOW: Deferrable, but track cumulative deferrals — more than 3 deferrals of same task = escalate to MEDIUM.
+
+CRITICAL ANALYSIS REQUIREMENTS:
+(1) Overdue detection: Calculate days past due for every task. ANY overdue CRITICAL task = system-wide CRITICAL alert.
+(2) Resource conflicts: Two tasks on same day? Flag if total hours exceed 16 (two-shift capacity). More than 24h on one day = physically impossible.
+(3) Plant availability calculation: Total scheduled maintenance hours this month / (30 × 24) = downtime fraction. Target: <10% downtime = >90% availability.
+(4) Preventive vs corrective ratio: Track what percentage of tasks are reactive (corrective) vs planned (preventive). Industry benchmark: >80% preventive. Below 60%: CRITICAL maintenance culture problem.
+(5) Cross-module urgency: If reactor or materials module flagged concerns, check if corresponding maintenance tasks exist. If not — CRITICAL gap.
+(6) Backlog analysis: Growing backlog = declining reliability. Calculate backlog trend.
+
+JSON: {"alert_level":"...","confidence":N,"plant_availability_pct":N,"overdue_count":N,"risk_assessment":"...","reasoning":[...],"recommendations":[...],"cross_module_impacts":[...],"scheduling_insights":"..."}`,
+
+  safety: `SAFETY & REGULATORY COMPLIANCE — CRITICAL OVERSIGHT.
+
+REGULATORY FRAMEWORK (enforce compliance):
+- IAEA SSR-2/1 Rev.1: Design safety requirements for nuclear power plants. 69 requirements covering all aspects.
+- IAEA GSR Part 4: Safety assessment for facilities and activities.
+- NRC 10 CFR 50: Domestic licensing of production and utilization facilities.
+- ASME BPVC Section III: Nuclear facility components construction rules.
+- ASME Section XI: In-service inspection of nuclear plant components.
+- EPA 40 CFR 190: Radiation protection standards — dose limits.
+- DOE Order 420.1C: Facility safety.
+
+CRITICAL ANALYSIS REQUIREMENTS:
+(1) Alert severity audit: ANY unresolved CRITICAL alert older than 24 hours = REGULATORY VIOLATION. Flag immediately with specific standard reference.
+(2) Compliance gap analysis: Compare tracked standards against minimum required set (SSR-2/1, 10 CFR 50, ASME III, Section XI minimum). Missing ANY = CRITICAL gap.
+(3) Defense-in-depth assessment: Are multiple safety barriers being challenged simultaneously? Even if each individually is MONITOR-level, two concurrent issues = WARNING.
+(4) Dose tracking: If any readings approach 1 mSv/year (public limit) or 20 mSv/year (worker limit), escalate immediately.
+(5) Event precursor analysis: Look at alert patterns. Increasing frequency even of low-severity alerts = leading indicator of systemic issue.
+(6) Regulatory reporting triggers: Identify any conditions that would require reporting to regulatory authority within 24h, 48h, or 30 days per NRC reporting guidelines.
+(7) ALARA verification: Is the principle of As Low As Reasonably Achievable being applied? Challenge if safety margins are unnecessarily thin.
+
+JSON: {"alert_level":"...","confidence":N,"safety_posture":"...","compliance_coverage_pct":N,"regulatory_gaps":[...],"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...],"trend_analysis":"..."}`
 };
 
 // Global AI status for user-facing messages
 let _aiStatusCallback = null;
 function setGlobalAiStatus(msg) { if (_aiStatusCallback) _aiStatusCallback(msg); }
 
+// AI request counter (persists per day in sessionStorage)
+const AI_DAILY_LIMIT = 20;
+function getAiCount() {
+  try {
+    const d = JSON.parse(sessionStorage.getItem('llyana_ai_usage') || '{}');
+    const today = new Date().toISOString().slice(0, 10);
+    if (d.date !== today) return { date: today, count: 0 };
+    return d;
+  } catch { return { date: new Date().toISOString().slice(0, 10), count: 0 }; }
+}
+function incAiCount() {
+  const d = getAiCount();
+  d.count++;
+  try { sessionStorage.setItem('llyana_ai_usage', JSON.stringify(d)); } catch {}
+  if (_aiCountCallback) _aiCountCallback(d.count);
+  return d.count;
+}
+let _aiCountCallback = null;
+
+// Store last AI response per module for continuity
+const _lastAiResponse = {};
+
+// Build unified brain context — every module sees what all other modules found
+function buildBrainContext(currentModule) {
+  const otherModules = Object.keys(_lastAiResponse).filter(m => m !== currentModule);
+  if (!otherModules.length) return '';
+  const brain = otherModules.map(m => {
+    const r = _lastAiResponse[m];
+    return `${m.toUpperCase()}: alert=${r.alert_level||'UNKNOWN'}, confidence=${r.confidence||'?'}%` +
+      (r.efficiency ? `, efficiency=${r.efficiency}%` : '') +
+      (r.recommendations?.length ? `, flags=[${(r.recommendations||[]).slice(0,3).map(x=>x.title||x).join('; ')}]` : '') +
+      (r.trend_analysis ? `, trend="${typeof r.trend_analysis==='string'?r.trend_analysis.slice(0,100):''}"` : '');
+  }).join('\n');
+  return `\nCROSS-MODULE INTELLIGENCE (you are ONE AI brain — Llyana — operating across all modules. Here is what you found in other modules. Use this to inform your analysis, flag cascading risks, and provide holistic recommendations):\n${brain}`;
+}
+
 async function geminiAnalyze(module, params, history = []) {
   if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
+  const prevAi = _lastAiResponse[module] ? `\nYOUR PREVIOUS ANALYSIS FOR THIS MODULE (build upon it, note changes, compare trends):\n${JSON.stringify({alert_level:_lastAiResponse[module].alert_level,confidence:_lastAiResponse[module].confidence,efficiency:_lastAiResponse[module].efficiency,recommendations:(_lastAiResponse[module].recommendations||[]).map(r=>r.title),trend_analysis:_lastAiResponse[module].trend_analysis})}` : '';
+  const brainCtx = buildBrainContext(module);
   const attempt = async (retryNum) => {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
-    console.log('Llyana: Calling Gemini for', module, retryNum > 0 ? `(retry ${retryNum})` : '');
+    console.log('Llyana: Calling Gemini for', module, retryNum > 0 ? `(retry ${retryNum})` : '', brainCtx ? '(with cross-module brain)' : '');
     const r = await fetch(url, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}\n\nAnalyze now. JSON only.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:1500} })
+      body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. JSON only.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:1500} })
     });
     if (r.status === 429) {
       const wait = retryNum === 0 ? 8 : 15;
@@ -127,6 +244,10 @@ async function geminiAnalyze(module, params, history = []) {
     console.log('Llyana: Gemini raw:', txt.slice(0, 200));
     const parsed = JSON.parse(txt.replace(/```json\s?/g,'').replace(/```/g,'').trim());
     console.log('Llyana: Parsed OK, alert:', parsed.alert_level);
+    incAiCount();
+    // Store for continuity + cross-module brain
+    _lastAiResponse[module] = parsed;
+    try { sessionStorage.setItem('llyana_ai_prev_'+module, JSON.stringify(parsed)); } catch {}
     return parsed;
   };
   try {
@@ -136,6 +257,9 @@ async function geminiAnalyze(module, params, history = []) {
     return res;
   } catch(e) { console.error('Llyana Gemini error:', e); return null; }
 }
+
+// Restore previous AI responses from session on page load
+try { Object.keys(sessionStorage).filter(k=>k.startsWith('llyana_ai_prev_')).forEach(k=>{_lastAiResponse[k.replace('llyana_ai_prev_','')]=JSON.parse(sessionStorage.getItem(k))}); } catch {}
 
 const C={bg:'#060608',bgCard:'#0D0D10',bgCardHover:'#131318',bgSidebar:'#0A0A0D',bgInput:'#111115',border:'#1A1A20',borderLight:'#252530',red:'#E63946',redGlow:'rgba(230,57,70,0.35)',redDim:'rgba(230,57,70,0.08)',green:'#10b981',greenDim:'rgba(16,185,129,0.1)',yellow:'#f59e0b',yellowDim:'rgba(245,158,11,0.1)',orange:'#f97316',orangeDim:'rgba(249,115,22,0.1)',cyan:'#06b6d4',cyanDim:'rgba(6,182,212,0.1)',gray:'#6b7280',text:'#E8E8EC',dim:'#8888A0',muted:'#50506A',veryMuted:'#2A2A3A'};
 
@@ -288,9 +412,18 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════
 const NAV=[{id:'overview',label:'Overview',d:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'},{id:'reactor',label:'Reactor Core',d:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83'},{id:'thermal',label:'Thermal & Power',d:'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z'},{id:'materials',label:'Materials',d:'M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5'},{id:'operations',label:'Operations',d:'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'},{id:'safety',label:'Safety',d:'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'},{id:'energy',label:'Energy Yield',d:'M22 12h-4l-3 9L9 3l-3 9H2'}];
 
-function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus}){
+function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount}){
   const[time,setTime]=useState(new Date());
-  useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t)},[]);
+  const[resetTimer,setResetTimer]=useState('');
+  useEffect(()=>{const t=setInterval(()=>{
+    const now=new Date();setTime(now);
+    // Calculate time until midnight PT (UTC-7 or UTC-8 depending on DST)
+    const pt=new Date(now.toLocaleString('en-US',{timeZone:'America/Los_Angeles'}));
+    const midnight=new Date(pt);midnight.setHours(24,0,0,0);
+    const diff=midnight-pt;
+    const hrs=Math.floor(diff/3600000);const mins=Math.floor((diff%3600000)/60000);const secs=Math.floor((diff%60000)/1000);
+    setResetTimer(`${String(hrs).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`);
+  },1000);return()=>clearInterval(t)},[]);
   const localTime=time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
   const tz=Intl.DateTimeFormat().resolvedOptions().timeZone.split('/').pop().replace(/_/g,' ');
   return(
@@ -304,6 +437,8 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus}){
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:6,height:6,borderRadius:'50%',background:sysStatus.color,animation:'pulse 2s infinite'}}/><span style={{fontSize:'9px',color:C.muted,letterSpacing:'.5px'}}>SYSTEM STATUS</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>Status: <span style={{color:sysStatus.color}}>{sysStatus.label}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>DB: <span style={{color:sysStatus.dbOk?C.green:C.red}}>{sysStatus.dbOk?'CONNECTED':'OFFLINE'}</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<15?C.cyan:aiCount<19?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.muted,marginTop:2}}>Resets: <span style={{color:C.dim}}>{resetTimer}</span></div>
         </div>
       </aside>
       <div style={{flex:1,marginLeft:190}}>
@@ -364,7 +499,12 @@ function ReactorPage({token,userId}){
   const[res,setRes]=useState(null);const[ak,setAk]=useState(0);const[saving,setSaving]=useState(false);const[history,setHistory]=useState([]);const[lastRead,setLastRead]=useState(null);
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[benchInfo,setBenchInfo]=useState('');const[confidence,setConfidence]=useState(null);
 
-  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);setCt(String(d[0].core_temp||''));setPr(String(d[0].pressure||''));setFr(String(d[0].flow_rate||''));}});},[token]);
+  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);
+    // Auto-analyze last reading with fallback (no AI call to save quota)
+    const t=+d[0].core_temp,p=+d[0].pressure,f=+d[0].flow_rate;
+    if(!isNaN(t)&&!isNaN(p)&&!isNaN(f)){const fb=fallback(t,p,f);setRes({eff:fb.eff,tPct:fb.tPct,pPct:fb.pPct,recs:fb.recs,overall:fb.overall});setAk(1)}
+    // Leave inputs empty for new entry
+  }});},[token]);
 
   const fallback=(t,p,f)=>{
     const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));
@@ -398,6 +538,8 @@ function ReactorPage({token,userId}){
       if(overall!=='SAFE')await dbPost('alerts',{venture:'nuclear',module:'reactor_core',title:`Reactor ${overall}`,description:`Temp:${t}\u00B0C P:${p}bar F:${f}L/s`,alert_level:overall,status:'active',user_id:userId},token);
       const fresh=await dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10');if(fresh){setHistory(fresh);setLastRead(fresh[0])}
     }setSaving(false);
+    // Clear inputs for next entry
+    setCt('');setPr('');setFr('');
   };
   const oc=res?.overall==='CRITICAL'?C.red:res?.overall==='WARNING'?C.orange:C.green;
   const nf=lastRead?.neutron_flux||'-';const cr=lastRead?.control_rod_position?lastRead.control_rod_position+'%':'-';const xl=lastRead?.xenon_level?lastRead.xenon_level+' ppm':'-';
@@ -433,9 +575,9 @@ function ReactorPage({token,userId}){
 // THERMAL & POWER — Supabase CRUD
 // ═══════════════════════════════════════════════════════════════
 function ThermalPage({token,userId}){
-  const[tp,setTp]=useState('3200');const[ct,setCt]=useState('290');const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);
+  const[tp,setTp]=useState('');const[ct,setCt]=useState('');const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[confidence,setConfidence]=useState(null);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20').then(d=>{if(d?.length){setReadings(d);setTp(String(d[0].target_power||3200));setCt(String(d[0].coolant_temp||290))}});},[token]);
+  useEffect(()=>{if(!token)return;dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20').then(d=>{if(d?.length)setReadings(d)});},[token]);
   const save=async()=>{setSaving(true);setAiActive(true);const t=parseFloat(tp),c=parseFloat(ct);if(isNaN(t)||isNaN(c)){setSaving(false);setAiActive(false);return}
     const ai=await geminiAnalyze('thermal',{target_power:t,coolant_temp:c},readings);
     let eff,out,therm,hr,sgSt,tSt,cSt;
@@ -450,7 +592,9 @@ function ThermalPage({token,userId}){
     }
     setAiActive(false);
     await dbPost('nuclear_thermal_readings',{target_power:t,current_output:out,coolant_temp:c,efficiency:Math.round(eff*10)/10,thermal_load:therm,heat_rate:hr,steam_generator_status:sgSt,turbine_status:tSt,condenser_status:cSt,user_id:userId},token);
-    const fresh=await dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20');if(fresh)setReadings(fresh);setSaving(false);};
+    const fresh=await dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20');if(fresh)setReadings(fresh);setSaving(false);
+    setTp('');setCt('');
+  };
   const last=readings[0];
   return(<div><PH red="Thermal & Power" white="Calculations" sub="Real-time power output and thermal performance"/>
     {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is analyzing thermal data...</span></div>}
@@ -479,28 +623,47 @@ function ThermalPage({token,userId}){
 function MaterialsPage({token,userId}){
   const[mats,setMats]=useState([]);const[sel,setSel]=useState('');const[saving,setSaving]=useState(false);
   const[newName,setNewName]=useState('');const[newDeg,setNewDeg]=useState('');
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);
   useEffect(()=>{if(!token)return;dbGet('nuclear_materials',token,'order=material_name.asc').then(d=>{if(d?.length){setMats(d);setSel(d[0].id)}});},[token]);
-  const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;setSaving(true);
-    const deg=parseFloat(newDeg);const st=deg>15?'warning':deg>10?'monitor':'safe';
-    await dbPost('nuclear_materials',{material_name:newName,degradation_pct:deg,status:st,last_inspection:new Date().toISOString().slice(0,10),remaining_life_months:Math.round((100-deg)/1.5),corrosion_rate:Math.round(deg*.3*100)/100,user_id:userId},token);
+  const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;setSaving(true);setAiActive(true);
+    const deg=parseFloat(newDeg);
+    const ai=await geminiAnalyze('materials',{material_name:newName,degradation_pct:deg},mats);
+    let st,remLife,corrRate;
+    if(ai){
+      st=ai.alert_level==='SAFE'?'safe':ai.alert_level==='MONITOR'?'monitor':'warning';
+      remLife=ai.remaining_life_months||Math.round((100-deg)/1.5);
+      corrRate=ai.corrosion_rate||Math.round(deg*.3*100)/100;
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:r.desc||r.description,sev:r.severity||'info'})));
+    } else {
+      st=deg>15?'warning':deg>10?'monitor':'safe';
+      remLife=Math.round((100-deg)/1.5);corrRate=Math.round(deg*.3*100)/100;
+      setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);
+    }
+    setAiActive(false);
+    await dbPost('nuclear_materials',{material_name:newName,degradation_pct:deg,status:st,last_inspection:new Date().toISOString().slice(0,10),remaining_life_months:remLife,corrosion_rate:corrRate,user_id:userId},token);
     const f=await dbGet('nuclear_materials',token,'order=material_name.asc');if(f)setMats(f);setNewName('');setNewDeg('');setSaving(false);};
   const selMat=mats.find(m=>m.id===sel);
   const avgDeg=mats.length?mats.reduce((a,m)=>a+(+m.degradation_pct||0),0)/mats.length:0;
   const warnCount=mats.filter(m=>m.status==='warning'||m.status==='critical').length;
   return(<div><PH red="Material Performance" white="Predictions" sub="Degradation curves and predictive analysis"/>
+    {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is analyzing material data...</span></div>}
     {warnCount>0&&<div style={{background:C.orangeDim,border:`1px solid ${C.orange}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .4s'}}><span style={{fontSize:'16px'}}>{'\u26A0'}</span><div><div style={{fontSize:'12px',fontWeight:600,color:C.orange}}>{warnCount} Material Warning{warnCount>1?'s':''}</div><div style={{fontSize:'11px',color:C.dim}}>Inspection recommended</div></div></div>}
-    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Avg Degradation" value={avgDeg.toFixed(1)+'%'} accent={C.red} delay={.05}/><StatCard label="Tracked" value={String(mats.length)} sub={`${warnCount} warnings`} accent={C.green} delay={.1}/></div>
+    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Avg Degradation" value={avgDeg.toFixed(1)+'%'} accent={C.red} delay={.05}/><StatCard label="Tracked" value={String(mats.length)} sub={`${warnCount} warnings`} accent={C.green} delay={.1}/>{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.15}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Degradation Levels" delay={.1}>{mats.length?<BrChart data={mats.map(m=>+m.degradation_pct||0)} labels={mats.map(m=>m.material_name?.slice(0,10))}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No materials tracked yet. Add one.</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:14,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{mats.map(m=>(<div key={m.id} style={{display:'flex',justifyContent:'space-between',fontSize:'11px',padding:'3px 0'}}><span style={{color:C.dim}}>{m.material_name}</span><span style={{fontFamily:'monospace',color:(+m.degradation_pct)>12?C.orange:C.green,fontWeight:600}}>{(+m.degradation_pct).toFixed(1)}%</span></div>))}</div>
         </Card>
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{r.action}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{r.result}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{c.impact}</span></div>))}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Add Material" delay={.15}>
           <Inp label="Material Name" value={newName} onChange={setNewName} required hint="e.g. Zircaloy-4"/>
           <Inp label="Degradation %" value={newDeg} onChange={setNewDeg} unit="%" required min={0} max={100}/>
-          <Btn onClick={addMat} disabled={saving}>{saving?'Processing...':'Add Material'}</Btn>
+          <Btn onClick={addMat} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Add Material'}</Btn>
         </Card>
         {selMat&&<Card title={`Details: ${selMat.material_name}`} delay={.25}>
           <div style={{fontSize:'24px',fontFamily:'monospace',fontWeight:700,color:(+selMat.degradation_pct)>12?C.orange:C.red,marginBottom:8}}>{(+selMat.degradation_pct).toFixed(1)}%</div>
@@ -518,10 +681,19 @@ function MaterialsPage({token,userId}){
 function OperationsPage({token,userId}){
   const[tasks,setTasks]=useState([]);const[filter,setFilter]=useState('All');const[hov,setHov]=useState(null);
   const[saving,setSaving]=useState(false);const[newTask,setNewTask]=useState('');const[newDate,setNewDate]=useState('');const[newPri,setNewPri]=useState('MEDIUM');const[newHrs,setNewHrs]=useState('4');
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);const[schedInsights,setSchedInsights]=useState('');const[plantAvail,setPlantAvail]=useState(null);
   useEffect(()=>{if(!token)return;dbGet('nuclear_maintenance',token,'order=scheduled_date.asc').then(d=>{if(d)setTasks(d)});},[token]);
-  const add=async()=>{if(!newTask||!newDate)return;setSaving(true);
+  const add=async()=>{if(!newTask||!newDate)return;setSaving(true);setAiActive(true);
     await dbPost('nuclear_maintenance',{task_name:newTask,scheduled_date:newDate,duration_hours:parseFloat(newHrs)||4,priority:newPri,status:'scheduled',assigned_team:'Team Alpha',user_id:userId},token);
-    const f=await dbGet('nuclear_maintenance',token,'order=scheduled_date.asc');if(f)setTasks(f);setNewTask('');setNewDate('');setSaving(false);};
+    const f=await dbGet('nuclear_maintenance',token,'order=scheduled_date.asc');if(f)setTasks(f);
+    // Run AI analysis on full task list
+    const ai=await geminiAnalyze('operations',{new_task:{name:newTask,date:newDate,priority:newPri,hours:newHrs},all_tasks:f||tasks},f||tasks);
+    if(ai){
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:r.desc||r.description,sev:r.severity||'info'})));
+      setSchedInsights(ai.scheduling_insights||'');setPlantAvail(ai.plant_availability_pct||null);
+    } else { setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setSchedInsights('');setPlantAvail(null); }
+    setAiActive(false);setNewTask('');setNewDate('');setSaving(false);};
   const complete=async(id)=>{await dbPatch('nuclear_maintenance',id,{status:'completed',completed_at:new Date().toISOString()},token);const f=await dbGet('nuclear_maintenance',token,'order=scheduled_date.asc');if(f)setTasks(f);};
   const active=tasks.filter(t=>t.status!=='completed'&&t.status!=='cancelled');
   const completed=tasks.filter(t=>t.status==='completed');
@@ -529,20 +701,27 @@ function OperationsPage({token,userId}){
   const nextDays=active.length?Math.max(0,Math.ceil((new Date(active[0]?.scheduled_date)-new Date())/86400000)):'-';
   const priC={CRITICAL:C.red,HIGH:C.yellow,MEDIUM:C.cyan,LOW:C.green};
   return(<div><PH red="Operational" white="Monitoring" sub="Maintenance scheduling and timeline management"/>
-    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Next Maintenance" value={String(nextDays)} sub="days" delay={.05}/><StatCard label="Scheduled" value={String(active.length)} sub="Active tasks" delay={.1}/><StatCard label="Completed" value={String(completed.length)} accent={C.green} delay={.15}/></div>
+    {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is analyzing maintenance schedule...</span></div>}
+    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Next Maintenance" value={String(nextDays)} sub="days" delay={.05}/><StatCard label="Scheduled" value={String(active.length)} sub="Active tasks" delay={.1}/><StatCard label="Completed" value={String(completed.length)} accent={C.green} delay={.15}/>{plantAvail&&<StatCard label="Plant Availability" value={plantAvail+'%'} accent={plantAvail>90?C.green:C.orange} delay={.2}/>}{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.25}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
-      <Card title="Maintenance Timeline" delay={.1} actions={<div style={{display:'flex',gap:6}}>{['All','Critical','High','Medium'].map(f=><Pill key={f} active={filter===f} onClick={()=>setFilter(f)}>{f}</Pill>)}</div>}>
-        {filtered.length?filtered.map((t,i)=>(<div key={t.id} onMouseEnter={()=>setHov(t.id)} onMouseLeave={()=>setHov(null)} style={{background:hov===t.id?C.bgCardHover:C.bg,border:`1px solid ${hov===t.id?(priC[t.priority]||C.cyan)+'30':C.border}`,borderRadius:10,padding:'14px 16px',marginBottom:8,borderLeft:`3px solid ${priC[t.priority]||C.cyan}`,animation:`slideIn .3s ease-out ${i*.05}s both`,transition:'all .25s',cursor:'pointer',transform:hov===t.id?'translateX(4px)':'none'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:'13px',fontWeight:500}}>{t.task_name}</div><div style={{fontSize:'10px',color:C.muted,marginTop:2}}>{t.scheduled_date} \u00B7 {t.duration_hours}h{t.assigned_team?` \u00B7 ${t.assigned_team}`:''}</div></div>
-          <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{background:(priC[t.priority]||C.cyan)+'18',color:priC[t.priority]||C.cyan,fontSize:'9px',fontWeight:700,padding:'3px 8px',borderRadius:4}}>{t.priority}</span><button onClick={e=>{e.stopPropagation();complete(t.id)}} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'9px',padding:'2px 6px',cursor:'pointer'}}>{'\u2713'}</button></div></div>
-        </div>)):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No tasks. Add one.</div>}
-      </Card>
+      <div style={{display:'flex',flexDirection:'column',gap:16}}>
+        <Card title="Maintenance Timeline" delay={.1} actions={<div style={{display:'flex',gap:6}}>{['All','Critical','High','Medium'].map(f=><Pill key={f} active={filter===f} onClick={()=>setFilter(f)}>{f}</Pill>)}</div>}>
+          {filtered.length?filtered.map((t,i)=>(<div key={t.id} onMouseEnter={()=>setHov(t.id)} onMouseLeave={()=>setHov(null)} style={{background:hov===t.id?C.bgCardHover:C.bg,border:`1px solid ${hov===t.id?(priC[t.priority]||C.cyan)+'30':C.border}`,borderRadius:10,padding:'14px 16px',marginBottom:8,borderLeft:`3px solid ${priC[t.priority]||C.cyan}`,animation:`slideIn .3s ease-out ${i*.05}s both`,transition:'all .25s',cursor:'pointer',transform:hov===t.id?'translateX(4px)':'none'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:'13px',fontWeight:500}}>{t.task_name}</div><div style={{fontSize:'10px',color:C.muted,marginTop:2}}>{t.scheduled_date} {'\u00B7'} {t.duration_hours}h{t.assigned_team?` ${'\u00B7'} ${t.assigned_team}`:''}</div></div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{background:(priC[t.priority]||C.cyan)+'18',color:priC[t.priority]||C.cyan,fontSize:'9px',fontWeight:700,padding:'3px 8px',borderRadius:4}}>{t.priority}</span><button onClick={e=>{e.stopPropagation();complete(t.id)}} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'9px',padding:'2px 6px',cursor:'pointer'}}>{'\u2713'}</button></div></div>
+          </div>)):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No tasks. Add one.</div>}
+        </Card>
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{r.action}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{r.result}</div></div></div>))}</div></Card>}
+        {schedInsights&&<Card title="Scheduling Insights" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{schedInsights}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.35}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{c.impact}</span></div>))}</div></Card>}
+      </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Add Task" delay={.15}>
           <Inp label="Task Name" value={newTask} onChange={setNewTask} required/>
           <div style={{marginBottom:18}}><label style={{fontSize:'12px',color:C.dim,fontWeight:500,display:'block',marginBottom:6}}>Date <span style={{color:C.red}}>*</span></label><input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} className="input-focus" style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'11px 14px',color:C.text,fontSize:'14px',outline:'none',boxSizing:'border-box',colorScheme:'dark'}}/></div>
           <div style={{display:'flex',gap:8,marginBottom:18}}><div style={{flex:1}}><label style={{fontSize:'12px',color:C.dim,display:'block',marginBottom:6}}>Priority</label><select value={newPri} onChange={e=>setNewPri(e.target.value)} style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'11px',color:C.text,fontSize:'13px',outline:'none',appearance:'none'}}><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></div><div style={{flex:1}}><Inp label="Hours" value={newHrs} onChange={setNewHrs} min={1} max={72}/></div></div>
-          <Btn onClick={add} disabled={saving}>{saving?'Processing...':'Schedule Task'}</Btn>
+          <Btn onClick={add} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Schedule Task'}</Btn>
         </Card>
         {completed.length>0&&<Card title="Completed" delay={.25}>{completed.slice(0,5).map((t,i)=><div key={t.id} style={{display:'flex',gap:8,alignItems:'center',padding:'6px 0',fontSize:'11px',color:C.dim}}><div style={{width:6,height:6,borderRadius:'50%',background:C.green,flexShrink:0}}/>{t.task_name}</div>)}</Card>}
         <Card title="Statistics" delay={.3}><PBar value={completed.length&&tasks.length?Math.round(completed.length/tasks.length*100):0} color={C.green} label="Completion Rate"/></Card>
@@ -557,30 +736,60 @@ function OperationsPage({token,userId}){
 function SafetyPage({token,userId}){
   const[alerts,setAlerts]=useState([]);const[comp,setComp]=useState([]);const[saving,setSaving]=useState(false);
   const[newStd,setNewStd]=useState('');const[newCode,setNewCode]=useState('');
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[safetyPosture,setSafetyPosture]=useState('');const[regGaps,setRegGaps]=useState([]);
   useEffect(()=>{if(!token)return;
     dbGet('alerts',token,'order=created_at.desc&limit=20').then(d=>{if(d)setAlerts(d)});
     dbGet('nuclear_compliance',token,'order=standard_name.asc').then(d=>{if(d)setComp(d)});
   },[token]);
   const resolve=async(id)=>{await dbPatch('alerts',id,{status:'resolved',resolved_at:new Date().toISOString()},token);const f=await dbGet('alerts',token,'order=created_at.desc&limit=20');if(f)setAlerts(f);};
-  const addComp=async()=>{if(!newStd)return;setSaving(true);
+  const addComp=async()=>{if(!newStd)return;setSaving(true);setAiActive(true);
     await dbPost('nuclear_compliance',{standard_name:newStd,standard_code:newCode||null,last_review:new Date().toISOString().slice(0,10),status:'PENDING',user_id:userId},token);
-    const f=await dbGet('nuclear_compliance',token,'order=standard_name.asc');if(f)setComp(f);setNewStd('');setNewCode('');setSaving(false);};
+    const freshComp=await dbGet('nuclear_compliance',token,'order=standard_name.asc');if(freshComp)setComp(freshComp);
+    // Run AI safety analysis
+    const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:freshComp||comp,new_standard:{name:newStd,code:newCode}},alerts);
+    if(ai){
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:r.desc||r.description,sev:r.severity||'info'})));
+      setTrendInfo(ai.trend_analysis||'');setSafetyPosture(ai.safety_posture||'');setRegGaps(ai.regulatory_gaps||[]);
+    } else { setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setTrendInfo('');setSafetyPosture('');setRegGaps([]); }
+    setAiActive(false);setNewStd('');setNewCode('');setSaving(false);};
+  const runSafetyAudit=async()=>{setAiActive(true);
+    const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:comp},alerts);
+    if(ai){
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:r.desc||r.description,sev:r.severity||'info'})));
+      setTrendInfo(ai.trend_analysis||'');setSafetyPosture(ai.safety_posture||'');setRegGaps(ai.regulatory_gaps||[]);
+    }
+    setAiActive(false);};
   const activeAlerts=alerts.filter(a=>a.status==='active');
   const critCount=activeAlerts.filter(a=>a.alert_level==='CRITICAL').length;
   const warnCount=activeAlerts.filter(a=>a.alert_level==='WARNING').length;
   const compOk=comp.filter(c=>c.status==='COMPLIANT').length;
   const alC={CRITICAL:C.red,WARNING:C.orange,MONITOR:C.yellow,SAFE:C.green};
   return(<div><PH red="Safety & Compliance" white="Flagging" sub="Alert monitoring and regulatory compliance"/>
-    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Critical" value={String(critCount)} accent={C.red} delay={.05}/><StatCard label="Warnings" value={String(warnCount)} accent={C.yellow} delay={.1}/><StatCard label="Active" value={String(activeAlerts.length)} delay={.15}/><StatCard label="Compliance" value={`${compOk}/${comp.length}`} accent={C.green} delay={.2}/></div>
+    {aiActive&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .3s'}}><div style={{width:16,height:16,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan}}>Llyana AI is running safety audit...</span></div>}
+    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Critical" value={String(critCount)} accent={C.red} delay={.05}/><StatCard label="Warnings" value={String(warnCount)} accent={C.yellow} delay={.1}/><StatCard label="Active" value={String(activeAlerts.length)} delay={.15}/><StatCard label="Compliance" value={`${compOk}/${comp.length}`} accent={C.green} delay={.2}/>{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.25}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
-      <Card title="Safety Alerts" delay={.1}>
-        {alerts.length?alerts.map((a,i)=>{const ac=alC[a.alert_level]||C.gray;return(<div key={a.id} style={{background:ac+'08',border:`1px solid ${ac}20`,borderRadius:10,padding:'14px 16px',marginBottom:8,animation:`fadeUp .3s ease-out ${i*.06}s both`}}>
-          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:'13px',fontWeight:600}}>{a.title||'Alert'}</div><div style={{display:'flex',gap:6,alignItems:'center'}}><span style={{fontSize:'9px',fontWeight:700,color:a.status==='resolved'?C.green:a.status==='monitoring'?C.yellow:C.cyan}}>{a.status?.toUpperCase()}</span>{a.status==='active'&&<button onClick={()=>resolve(a.id)} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'8px',padding:'2px 6px',cursor:'pointer'}}>Resolve</button>}</div></div>
-          <div style={{fontSize:'11px',color:C.dim,marginBottom:4}}>{a.description||''}</div>
-          <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:'9px',color:C.muted,fontFamily:'monospace'}}>{a.created_at?new Date(a.created_at).toLocaleString():''}</span><span style={{fontSize:'8px',background:ac+'15',color:ac,padding:'2px 6px',borderRadius:3,fontWeight:600}}>{a.alert_level}</span></div>
-        </div>)}):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No alerts. System clean.</div>}
-      </Card>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
+        <Card title="Safety Alerts" delay={.1}>
+          {alerts.length?alerts.map((a,i)=>{const ac=alC[a.alert_level]||C.gray;return(<div key={a.id} style={{background:ac+'08',border:`1px solid ${ac}20`,borderRadius:10,padding:'14px 16px',marginBottom:8,animation:`fadeUp .3s ease-out ${i*.06}s both`}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:'13px',fontWeight:600}}>{a.title||'Alert'}</div><div style={{display:'flex',gap:6,alignItems:'center'}}><span style={{fontSize:'9px',fontWeight:700,color:a.status==='resolved'?C.green:a.status==='monitoring'?C.yellow:C.cyan}}>{a.status?.toUpperCase()}</span>{a.status==='active'&&<button onClick={()=>resolve(a.id)} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'8px',padding:'2px 6px',cursor:'pointer'}}>Resolve</button>}</div></div>
+            <div style={{fontSize:'11px',color:C.dim,marginBottom:4}}>{a.description||''}</div>
+            <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:'9px',color:C.muted,fontFamily:'monospace'}}>{a.created_at?new Date(a.created_at).toLocaleString():''}</span><span style={{fontSize:'8px',background:ac+'15',color:ac,padding:'2px 6px',borderRadius:3,fontWeight:600}}>{a.alert_level}</span></div>
+          </div>)}):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No alerts. System clean.</div>}
+        </Card>
+        {safetyPosture&&<Card title="Safety Posture Assessment" delay={.15}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safetyPosture}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Safety Recommendations" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{r.action}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{r.result}</div></div></div>))}</div></Card>}
+        {regGaps.length>0&&<Card title="Regulatory Gaps" delay={.3}><div>{regGaps.map((g,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.red+'08',borderRadius:8,border:`1px solid ${C.red}15`}}><span style={{color:C.red,fontSize:'12px'}}>{'\u26A0'}</span><span style={{fontSize:'11px',color:C.dim}}>{g}</span></div>))}</div></Card>}
+        {trendInfo&&<Card title="Alert Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.4}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{c.impact}</span></div>))}</div></Card>}
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:16}}>
+        <Card title="Run Safety Audit" delay={.12}>
+          <Btn onClick={runSafetyAudit} disabled={aiActive}>{aiActive?'AI Auditing...':'Run AI Safety Audit'}</Btn>
+          <div style={{fontSize:'10px',color:C.muted,marginTop:8,textAlign:'center'}}>Analyzes all alerts and compliance gaps</div>
+        </Card>
         <Card title="Compliance Standards" delay={.15}>
           {comp.length?comp.map((c,i)=><div key={c.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:i<comp.length-1?`1px solid ${C.border}`:'none'}}><div><div style={{fontSize:'11px',fontWeight:500}}>{c.standard_name}</div>{c.standard_code&&<div style={{fontSize:'9px',color:C.muted}}>{c.standard_code}</div>}</div><span style={{fontSize:'9px',fontWeight:700,color:c.status==='COMPLIANT'?C.green:c.status==='PENDING'?C.yellow:C.red}}>{c.status}</span></div>)
           :<div style={{color:C.muted,fontSize:'12px',textAlign:'center',padding:12}}>No standards tracked. Add one.</div>}
@@ -588,7 +797,7 @@ function SafetyPage({token,userId}){
         <Card title="Add Standard" delay={.25}>
           <Inp label="Standard Name" value={newStd} onChange={setNewStd} required hint="e.g. NRC 10 CFR 50"/>
           <Inp label="Standard Code" value={newCode} onChange={setNewCode} hint="Optional"/>
-          <Btn onClick={addComp} disabled={saving}>{saving?'Processing...':'Add Standard'}</Btn>
+          <Btn onClick={addComp} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Add Standard'}</Btn>
         </Card>
       </div>
     </div>
@@ -599,10 +808,10 @@ function SafetyPage({token,userId}){
 // ENERGY YIELD — Supabase CRUD
 // ═══════════════════════════════════════════════════════════════
 function EnergyPage({token,userId}){
-  const[ft,setFt]=useState('45');const[area,setArea]=useState('10');const[loc,setLoc]=useState('Main Entrance');
+  const[ft,setFt]=useState('');const[area,setArea]=useState('');const[loc,setLoc]=useState('Main Entrance');
   const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);const[model,setModel]=useState('ai');
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[deployInsights,setDeployInsights]=useState('');const[confidence,setConfidence]=useState(null);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12').then(d=>{if(d?.length){setReadings(d);setFt(String(d[0].foot_traffic_per_min||45));setArea(String(d[0].area_sqm||10));setLoc(d[0].location||'Main Entrance')}});},[token]);
+  useEffect(()=>{if(!token)return;dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12').then(d=>{if(d?.length)setReadings(d)});},[token]);
   const calc=async()=>{const f=parseFloat(ft),a=parseFloat(area);if(isNaN(f)||isNaN(a))return;setSaving(true);setAiActive(true);
     const ai=await geminiAnalyze('energy',{location:loc,foot_traffic_per_min:f,area_sqm:a},readings);
     let raw,net,daily,monthly,eff;
@@ -615,7 +824,9 @@ function EnergyPage({token,userId}){
     }
     setAiActive(false);
     await dbPost('nuclear_egm_data',{location:loc,foot_traffic_per_min:f,area_sqm:a,raw_power_w:Math.round(raw*100)/100,net_power_w:Math.round(net*100)/100,daily_kwh:Math.round(daily*100)/100,monthly_kwh:Math.round(monthly*100)/100,efficiency_pct:Math.round(eff*100)/100,mat_condition:'good',user_id:userId},token);
-    const fresh=await dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12');if(fresh)setReadings(fresh);setSaving(false);};
+    const fresh=await dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12');if(fresh)setReadings(fresh);setSaving(false);
+    setFt('');setArea('');
+  };
   const last=readings[0];
   const annualRev=last?((+last.monthly_kwh)*12*0.12).toFixed(2):'-';
   return(<div><PH red="Energy Yield" white="Projections" sub="EGM mat yield projections and forecast"/>
@@ -655,11 +866,12 @@ function EnergyPage({token,userId}){
 export default function App(){
   const[user,setUser]=useState(null);const[page,setPage]=useState('overview');const[loading,setLoading]=useState(true);
   const[aiStatus,setAiStatus]=useState(null);
+  const[aiCount,setAiCount]=useState(getAiCount().count);
   const token=user?.token;const userId=user?.id;
   const sysStatus=useSystemStatus(token);
 
   // Wire up global AI status callback
-  useEffect(()=>{_aiStatusCallback=setAiStatus;return()=>{_aiStatusCallback=null}},[]);
+  useEffect(()=>{_aiStatusCallback=setAiStatus;_aiCountCallback=setAiCount;return()=>{_aiStatusCallback=null;_aiCountCallback=null}},[]);
 
   useEffect(()=>{try{const s=sessionStorage.getItem('llyana_session');if(s){const p=JSON.parse(s);fetch(`${SB_URL}/auth/v1/user`,{headers:{Authorization:`Bearer ${p.token}`,apikey:SB_KEY}}).then(r=>{if(r.ok)setUser(p);else sessionStorage.removeItem('llyana_session');setLoading(false)}).catch(()=>{sessionStorage.removeItem('llyana_session');setLoading(false)});return}}catch(e){}setLoading(false)},[]);
   useEffect(()=>{try{sessionStorage.setItem('llyana_page',page)}catch(e){}},[page]);
@@ -678,5 +890,5 @@ export default function App(){
     safety:<SafetyPage token={token} userId={userId}/>,
     energy:<EnergyPage token={token} userId={userId}/>,
   };
-  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus}>{pg[page]||pg.overview}</Layout>;
+  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus} aiCount={aiCount}>{pg[page]||pg.overview}</Layout>;
 }
