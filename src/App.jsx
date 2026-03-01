@@ -247,48 +247,53 @@ function OverviewPage({onNav,token,sysStatus}){
 // REACTOR CORE — Full Supabase CRUD
 // ═══════════════════════════════════════════════════════════════
 function ReactorPage({token,userId}){
-  const[ct,setCt]=useState('550');const[pr,setPr]=useState('155');const[fr,setFr]=useState('4200');
-  const[res,setRes]=useState(null);const[ak,setAk]=useState(0);const[saving,setSaving]=useState(false);const[history,setHistory]=useState([]);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);const l=d[0];setCt(String(l.core_temp||550));setPr(String(l.pressure||155));setFr(String(l.flow_rate||4200))}});},[token]);
-  const run=async(save)=>{
+  const[ct,setCt]=useState('');const[pr,setPr]=useState('');const[fr,setFr]=useState('');
+  const[res,setRes]=useState(null);const[ak,setAk]=useState(0);const[saving,setSaving]=useState(false);const[history,setHistory]=useState([]);const[lastRead,setLastRead]=useState(null);
+  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);const l=d[0];setCt(String(l.core_temp||''));setPr(String(l.pressure||''));setFr(String(l.flow_rate||''));
+      // Auto-analyze last reading
+      const t=+l.core_temp,p=+l.pressure,f=+l.flow_rate;if(!isNaN(t)&&!isNaN(p)&&!isNaN(f)){const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));const recs=[];const tA=getAlertLevel(t,280,600),pA=getAlertLevel(p,100,180),fA=getAlertLevel(f,3500,5000);if(tA==='CRITICAL')recs.push({title:'CRITICAL: Temperature Breach',desc:`Core temp ${t}\u00B0C exceeds safety limits!`,sev:'critical'});else if(tA==='WARNING')recs.push({title:'Temperature Warning',desc:`Core temp ${t}\u00B0C at 90%+ of range.`,sev:'warning'});if(pA==='WARNING'||pA==='CRITICAL')recs.push({title:'Pressure Alert',desc:`Pressure ${p} bar outside optimal.`,sev:'warning'});if(fA!=='SAFE')recs.push({title:'Flow Rate Adjustment',desc:`Flow ${f} L/s outside optimal band.`,sev:'warning'});if(!recs.length)recs.push({title:'All Systems Nominal',desc:'All parameters within optimal range.',sev:'safe'});recs.push({title:'AI Suggestion',desc:`Adjust flow to ${Math.round(f*1.035)} L/s for improved efficiency.`,sev:'info'});const overall=recs.some(r=>r.sev==='critical')?'CRITICAL':recs.some(r=>r.sev==='warning')?'WARNING':'SAFE';setRes({eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall});setAk(1)}
+    }});},[token]);
+  const run=async()=>{
     const t=parseFloat(ct),p=parseFloat(pr),f=parseFloat(fr);if(isNaN(t)||isNaN(p)||isNaN(f))return;
     const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));
     const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));
     const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));
     const tA=getAlertLevel(t,280,600),pA=getAlertLevel(p,100,180),fA=getAlertLevel(f,3500,5000);
+    const nFlux=(2.2+Math.random()*.4).toFixed(1)+'e13';const cRod=Math.round(60+Math.random()*15);const xenon=(1+Math.random()*.5).toFixed(1);
     const recs=[];
     if(tA==='CRITICAL')recs.push({title:'CRITICAL: Temperature Breach',desc:`Core temp ${t}\u00B0C exceeds safety limits!`,sev:'critical'});
     else if(tA==='WARNING')recs.push({title:'Temperature Warning',desc:`Core temp ${t}\u00B0C at 90%+ of range.`,sev:'warning'});
     if(pA==='WARNING'||pA==='CRITICAL')recs.push({title:'Pressure Alert',desc:`Pressure ${p} bar outside optimal.`,sev:'warning'});
     if(fA!=='SAFE')recs.push({title:'Flow Rate Adjustment',desc:`Flow ${f} L/s outside optimal band.`,sev:'warning'});
     if(!recs.length)recs.push({title:'All Systems Nominal',desc:'All parameters within optimal range.',sev:'safe'});
-    recs.push({title:'AI Suggestion',desc:`Adjust flow to ${Math.round(f*1.035)} L/s for +${(Math.random()*.5+.1).toFixed(1)}% efficiency.`,sev:'info'});
+    recs.push({title:'AI Suggestion',desc:`Adjust flow to ${Math.round(f*1.035)} L/s for improved efficiency.`,sev:'info'});
     const overall=recs.some(r=>r.sev==='critical')?'CRITICAL':recs.some(r=>r.sev==='warning')?'WARNING':'SAFE';
     setRes({eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall});setAk(k=>k+1);
-    if(save&&token){setSaving(true);
-      const row={core_temp:t,pressure:p,flow_rate:f,efficiency:Math.round(eff*10)/10,alert_level:overall,neutron_flux:'2.4e13',control_rod_position:68,xenon_level:1.2,user_id:userId};
+    if(token){setSaving(true);
+      const row={core_temp:t,pressure:p,flow_rate:f,efficiency:Math.round(eff*10)/10,alert_level:overall,neutron_flux:nFlux,control_rod_position:cRod,xenon_level:parseFloat(xenon),user_id:userId};
       await dbPost('nuclear_reactor_readings',row,token);
       if(overall!=='SAFE')await dbPost('alerts',{venture:'nuclear',module:'reactor_core',title:`Reactor ${overall}`,description:`Temp:${t}\u00B0C P:${p}bar F:${f}L/s`,alert_level:overall,status:'active',user_id:userId},token);
-      const fresh=await dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10');if(fresh)setHistory(fresh);
+      const fresh=await dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10');if(fresh){setHistory(fresh);setLastRead(fresh[0])}
       setSaving(false);}
   };
-  useEffect(()=>{run(false)},[]);
   const oc=res?.overall==='CRITICAL'?C.red:res?.overall==='WARNING'?C.orange:C.green;
-  return(<div><PH red="Reactor Core" white="Analysis" sub="Real-time optimization \u2014 data saved to Supabase"/>
+  const nf=lastRead?.neutron_flux||'-';const cr=lastRead?.control_rod_position?lastRead.control_rod_position+'%':'-';const xl=lastRead?.xenon_level?lastRead.xenon_level+' ppm':'-';
+  return(<div><PH red="Reactor Core" white="Analysis" sub="Real-time optimization and analysis"/>
     {res&&<div style={{background:oc+'10',border:`1px solid ${oc}25`,borderRadius:10,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between',animation:'fadeUp .3s'}}><div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:'50%',background:oc,animation:'pulse 2s infinite'}}/><span style={{fontSize:'12px',fontWeight:600,color:oc}}>Status: {res.overall}</span></div><span style={{fontSize:'10px',color:C.dim,fontFamily:'monospace'}}>Readings: {history.length}</span></div>}
+    {!res&&!history.length&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,fontSize:'12px',color:C.cyan}}>No readings yet. Enter parameters and run analysis to get started.</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <Card title="Core Performance" delay={.1}><div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={res?.eff||0} label="Efficiency"/><Gauge value={res?.tPct||0} label="Temperature"/><Gauge value={res?.pPct||0} label="Pressure"/></div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,borderTop:`1px solid ${C.border}`,paddingTop:16}}>{[['Neutron Flux','2.4\u00D710\u00B9\u00B3','n/cm\u00B2s'],['Control Rod','68%','Position'],['Xenon','1.2 ppm','Level']].map(([l,v,u])=>(<div key={l} className="card-hover" style={{background:C.bg,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`}}><div style={{fontSize:'9px',color:C.muted,textTransform:'uppercase'}}>{l}</div><div style={{fontFamily:'monospace',fontSize:'16px',fontWeight:700,margin:'4px 0 2px'}}>{v}</div><div style={{fontSize:'8px',color:C.muted}}>{u}</div></div>))}</div>
+        <Card title="Core Performance" delay={.1}>{res?<div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={res.eff} label="Efficiency"/><Gauge value={res.tPct} label="Temperature"/><Gauge value={res.pPct} label="Pressure"/></div>:<div style={{padding:30,textAlign:'center',color:C.muted,fontSize:'12px'}}>Run analysis to see gauges</div>}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,borderTop:`1px solid ${C.border}`,paddingTop:16}}>{[['Neutron Flux',nf,'n/cm\u00B2s'],['Control Rod',cr,'Position'],['Xenon',xl,'Level']].map(([l,v,u])=>(<div key={l} className="card-hover" style={{background:C.bg,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`}}><div style={{fontSize:'9px',color:C.muted,textTransform:'uppercase'}}>{l}</div><div style={{fontFamily:'monospace',fontSize:'16px',fontWeight:700,margin:'4px 0 2px'}}>{v}</div><div style={{fontSize:'8px',color:C.muted}}>{u}</div></div>))}</div>
         </Card>
-        <Card title="AI Insights" delay={.2}><div key={ak}>{(res?.recs||[]).map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>
-        {history.length>0&&<Card title="Reading History" delay={.3}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Efficiency % (last 10 readings)"/></Card>}
+        {res&&<Card title="AI Insights" delay={.2}><div key={ak}>{res.recs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {history.length>1&&<Card title="Efficiency History" delay={.3}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Last readings"/></Card>}
       </div>
       <Card title="Parameters" delay={.15}>
         <Inp label="Core Temperature" value={ct} onChange={setCt} unit={"\u00B0C"} required min={280} max={600} hint="Range: 280\u2013600\u00B0C"/>
         <Inp label="Pressure" value={pr} onChange={setPr} unit="bar" required min={100} max={180} hint="Range: 100\u2013180 bar"/>
         <Inp label="Flow Rate" value={fr} onChange={setFr} unit="L/s" required min={3500} max={5000} hint="Range: 3500\u20135000 L/s"/>
-        <Btn onClick={()=>run(true)} disabled={saving}>{saving?'Saving...':'Run & Save to DB'}</Btn>
+        <Btn onClick={run} disabled={saving}>{saving?'Processing...':'Run Analysis'}</Btn>
         <Btn outline style={{marginTop:8}} onClick={()=>{setCt('550');setPr('155');setFr('4200')}}>Reset Defaults</Btn>
       </Card>
     </div>
@@ -306,7 +311,7 @@ function ThermalPage({token,userId}){
     await dbPost('nuclear_thermal_readings',{target_power:t,current_output:out,coolant_temp:c,efficiency:Math.round(eff*10)/10,thermal_load:therm,heat_rate:hr,steam_generator_status:'OPTIMAL',turbine_status:eff>85?'OPTIMAL':'WARNING',condenser_status:'OPTIMAL',user_id:userId},token);
     const fresh=await dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20');if(fresh)setReadings(fresh);setSaving(false);};
   const last=readings[0];
-  return(<div><PH red="Thermal & Power" white="Calculations" sub="Real-time power output \u2014 saved to Supabase"/>
+  return(<div><PH red="Thermal & Power" white="Calculations" sub="Real-time power output and thermal performance"/>
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Output" value={last?Math.round(+last.current_output)+'':'-'} sub="MW" delay={.05}/><StatCard label="Efficiency" value={last?(+last.efficiency).toFixed(1)+'%':'-'} accent={C.green} delay={.1}/><StatCard label="Thermal Load" value={last?Math.round(+last.thermal_load)+'':'-'} sub="MWh" delay={.15}/><StatCard label="Heat Rate" value={last?Math.round(+last.heat_rate)+'':'-'} sub="BTU/kWh" delay={.2}/></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
@@ -316,7 +321,7 @@ function ThermalPage({token,userId}){
       <Card title="Power Control" delay={.15}>
         <Inp label="Target Power" value={tp} onChange={setTp} unit="MW" required min={0} max={4000}/>
         <Inp label="Coolant Temp" value={ct} onChange={setCt} unit={"\u00B0C"} required min={250} max={320}/>
-        <Btn onClick={save} disabled={saving}>{saving?'Saving...':'Calculate & Save'}</Btn>
+        <Btn onClick={save} disabled={saving}>{saving?'Processing...':'Run Calculation'}</Btn>
         <div style={{marginTop:16,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{['Steam Generator','Turbine','Condenser'].map(c=><div key={c} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',fontSize:'12px'}}><span style={{color:C.dim}}>{c}</span><span style={{color:last&&(c==='Turbine'&&(+last.efficiency)<85)?C.yellow:C.green,fontWeight:600,fontFamily:'monospace',fontSize:'11px'}}>{last&&c==='Turbine'&&(+last.efficiency)<85?'WARNING':'OPTIMAL'}</span></div>)}</div>
       </Card>
     </div>
@@ -337,7 +342,7 @@ function MaterialsPage({token,userId}){
   const selMat=mats.find(m=>m.id===sel);
   const avgDeg=mats.length?mats.reduce((a,m)=>a+(+m.degradation_pct||0),0)/mats.length:0;
   const warnCount=mats.filter(m=>m.status==='warning'||m.status==='critical').length;
-  return(<div><PH red="Material Performance" white="Predictions" sub="Degradation tracking \u2014 Supabase"/>
+  return(<div><PH red="Material Performance" white="Predictions" sub="Degradation curves and predictive analysis"/>
     {warnCount>0&&<div style={{background:C.orangeDim,border:`1px solid ${C.orange}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,animation:'fadeUp .4s'}}><span style={{fontSize:'16px'}}>{'\u26A0'}</span><div><div style={{fontSize:'12px',fontWeight:600,color:C.orange}}>{warnCount} Material Warning{warnCount>1?'s':''}</div><div style={{fontSize:'11px',color:C.dim}}>Inspection recommended</div></div></div>}
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Avg Degradation" value={avgDeg.toFixed(1)+'%'} accent={C.red} delay={.05}/><StatCard label="Tracked" value={String(mats.length)} sub={`${warnCount} warnings`} accent={C.green} delay={.1}/></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
@@ -350,7 +355,7 @@ function MaterialsPage({token,userId}){
         <Card title="Add Material" delay={.15}>
           <Inp label="Material Name" value={newName} onChange={setNewName} required hint="e.g. Zircaloy-4"/>
           <Inp label="Degradation %" value={newDeg} onChange={setNewDeg} unit="%" required min={0} max={100}/>
-          <Btn onClick={addMat} disabled={saving}>{saving?'Saving...':'Add & Save'}</Btn>
+          <Btn onClick={addMat} disabled={saving}>{saving?'Processing...':'Add Material'}</Btn>
         </Card>
         {selMat&&<Card title={`Details: ${selMat.material_name}`} delay={.25}>
           <div style={{fontSize:'24px',fontFamily:'monospace',fontWeight:700,color:(+selMat.degradation_pct)>12?C.orange:C.red,marginBottom:8}}>{(+selMat.degradation_pct).toFixed(1)}%</div>
@@ -378,7 +383,7 @@ function OperationsPage({token,userId}){
   const filtered=filter==='All'?active:active.filter(t=>t.priority===filter.toUpperCase());
   const nextDays=active.length?Math.max(0,Math.ceil((new Date(active[0]?.scheduled_date)-new Date())/86400000)):'-';
   const priC={CRITICAL:C.red,HIGH:C.yellow,MEDIUM:C.cyan,LOW:C.green};
-  return(<div><PH red="Operational" white="Monitoring" sub="Maintenance scheduling \u2014 Supabase"/>
+  return(<div><PH red="Operational" white="Monitoring" sub="Maintenance scheduling and timeline management"/>
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Next Maintenance" value={String(nextDays)} sub="days" delay={.05}/><StatCard label="Scheduled" value={String(active.length)} sub="Active tasks" delay={.1}/><StatCard label="Completed" value={String(completed.length)} accent={C.green} delay={.15}/></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
       <Card title="Maintenance Timeline" delay={.1} actions={<div style={{display:'flex',gap:6}}>{['All','Critical','High','Medium'].map(f=><Pill key={f} active={filter===f} onClick={()=>setFilter(f)}>{f}</Pill>)}</div>}>
@@ -392,7 +397,7 @@ function OperationsPage({token,userId}){
           <Inp label="Task Name" value={newTask} onChange={setNewTask} required/>
           <div style={{marginBottom:18}}><label style={{fontSize:'12px',color:C.dim,fontWeight:500,display:'block',marginBottom:6}}>Date <span style={{color:C.red}}>*</span></label><input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} className="input-focus" style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'11px 14px',color:C.text,fontSize:'14px',outline:'none',boxSizing:'border-box',colorScheme:'dark'}}/></div>
           <div style={{display:'flex',gap:8,marginBottom:18}}><div style={{flex:1}}><label style={{fontSize:'12px',color:C.dim,display:'block',marginBottom:6}}>Priority</label><select value={newPri} onChange={e=>setNewPri(e.target.value)} style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'11px',color:C.text,fontSize:'13px',outline:'none',appearance:'none'}}><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></div><div style={{flex:1}}><Inp label="Hours" value={newHrs} onChange={setNewHrs} min={1} max={72}/></div></div>
-          <Btn onClick={add} disabled={saving}>{saving?'Saving...':'Add Task'}</Btn>
+          <Btn onClick={add} disabled={saving}>{saving?'Processing...':'Schedule Task'}</Btn>
         </Card>
         {completed.length>0&&<Card title="Completed" delay={.25}>{completed.slice(0,5).map((t,i)=><div key={t.id} style={{display:'flex',gap:8,alignItems:'center',padding:'6px 0',fontSize:'11px',color:C.dim}}><div style={{width:6,height:6,borderRadius:'50%',background:C.green,flexShrink:0}}/>{t.task_name}</div>)}</Card>}
         <Card title="Statistics" delay={.3}><PBar value={completed.length&&tasks.length?Math.round(completed.length/tasks.length*100):0} color={C.green} label="Completion Rate"/></Card>
@@ -420,7 +425,7 @@ function SafetyPage({token,userId}){
   const warnCount=activeAlerts.filter(a=>a.alert_level==='WARNING').length;
   const compOk=comp.filter(c=>c.status==='COMPLIANT').length;
   const alC={CRITICAL:C.red,WARNING:C.orange,MONITOR:C.yellow,SAFE:C.green};
-  return(<div><PH red="Safety & Compliance" white="Flagging" sub="Alert monitoring \u2014 Supabase"/>
+  return(<div><PH red="Safety & Compliance" white="Flagging" sub="Alert monitoring and regulatory compliance"/>
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Critical" value={String(critCount)} accent={C.red} delay={.05}/><StatCard label="Warnings" value={String(warnCount)} accent={C.yellow} delay={.1}/><StatCard label="Active" value={String(activeAlerts.length)} delay={.15}/><StatCard label="Compliance" value={`${compOk}/${comp.length}`} accent={C.green} delay={.2}/></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
       <Card title="Safety Alerts" delay={.1}>
@@ -438,7 +443,7 @@ function SafetyPage({token,userId}){
         <Card title="Add Standard" delay={.25}>
           <Inp label="Standard Name" value={newStd} onChange={setNewStd} required hint="e.g. NRC 10 CFR 50"/>
           <Inp label="Standard Code" value={newCode} onChange={setNewCode} hint="Optional"/>
-          <Btn onClick={addComp} disabled={saving}>{saving?'Saving...':'Add Standard'}</Btn>
+          <Btn onClick={addComp} disabled={saving}>{saving?'Processing...':'Add Standard'}</Btn>
         </Card>
       </div>
     </div>
@@ -457,7 +462,7 @@ function EnergyPage({token,userId}){
     await dbPost('nuclear_egm_data',{location:loc,foot_traffic_per_min:f,area_sqm:a,raw_power_w:Math.round(raw*100)/100,net_power_w:Math.round(net*100)/100,daily_kwh:Math.round(daily*100)/100,monthly_kwh:Math.round(monthly*100)/100,efficiency_pct:Math.round(eff*100)/100,mat_condition:'good',user_id:userId},token);
     const fresh=await dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12');if(fresh)setReadings(fresh);setSaving(false);};
   const last=readings[0];
-  return(<div><PH red="Energy Yield" white="Projections" sub="EGM mat analysis \u2014 Supabase"/>
+  return(<div><PH red="Energy Yield" white="Projections" sub="EGM mat yield projections and forecast"/>
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Daily Yield" value={last?(+last.daily_kwh).toFixed(1)+'':'-'} sub="kWh" delay={.05}/><StatCard label="Monthly" value={last?Math.round(+last.monthly_kwh)+'':'-'} sub="kWh" delay={.1}/><StatCard label="Net Power" value={last?(+last.net_power_w).toFixed(1)+'':'-'} sub="W" delay={.15}/><StatCard label="Efficiency" value={last?(+last.efficiency_pct).toFixed(1)+'%':'-'} accent={C.green} delay={.2}/></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
@@ -469,7 +474,7 @@ function EnergyPage({token,userId}){
           <Inp label="Location" value={loc} onChange={setLoc} required/>
           <Inp label="Foot Traffic" value={ft} onChange={setFt} unit="steps/min" required min={1} max={200}/>
           <Inp label="Mat Area" value={area} onChange={setArea} unit="m\u00B2" required min={1} max={500}/>
-          <Btn onClick={calc} disabled={saving}>{saving?'Saving...':'Calculate & Save'}</Btn>
+          <Btn onClick={calc} disabled={saving}>{saving?'Processing...':'Run Calculation'}</Btn>
         </Card>
         <Card title="Projection Model" delay={.25}>
           {[{id:'ai',l:'AI Optimized',d:'ML-based projection'},{id:'linear',l:'Linear Regression',d:'Traditional'},{id:'hybrid',l:'Hybrid',d:'AI + historical'}].map(m=>(
