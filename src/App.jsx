@@ -40,15 +40,59 @@ Alert levels: SAFE (within range), MONITOR (80% threshold), WARNING (90-99%), CR
 Respond ONLY with valid JSON, no markdown, no backticks, no explanation outside the JSON.`;
 
 const MOD_PROMPTS = {
-  reactor: `REACTOR CORE MODULE. Ranges: Temp 280-600C (optimal 520-560), Pressure 100-180 bar (optimal 145-165), Flow 3500-5000 L/s (optimal 4000-4400).
-Steps: (1) Compare against range, (2) Check trend from history, (3) Cross-check thermal consistency, (4) Check material limits, (5) Recommend.
+  reactor: `REACTOR CORE MODULE. Operating ranges (STRICT):
+- Core Temperature: 280-600°C. Optimal: 520-560°C. Material limit (Zircaloy): 1200°C. IAEA SSR-2/1 requires staying below 600°C during normal ops.
+- Pressure: 100-180 bar. Optimal: 145-165 bar. PWR standard: ~155 bar (IAEA NS-G-1.9).
+- Flow Rate: 3500-5000 L/s. Optimal: 4000-4400 L/s. Below 3500 risks inadequate heat removal.
+
+ALERT THRESHOLDS (calculate distance from range center as % of half-range):
+- SAFE: <80% deviation from center
+- MONITOR: 80-90% deviation
+- WARNING: 90-100% deviation  
+- CRITICAL: >100% (outside range entirely)
+
+EFFICIENCY FORMULA: Base 95% minus penalties: |temp-540|*0.02 penalty, |pressure-155|*0.05 penalty, |flow-4200|*0.003 penalty. Clamp 50-99%.
+NEUTRON FLUX: Typical PWR 2.0-2.8e13 n/cm²s. Scale with power level.
+CONTROL ROD: 60-75% withdrawal during normal operation. More inserted = lower reactivity.
+XENON: 1.0-1.5 ppm equilibrium. Higher after power reduction (xenon poisoning effect).
+
+Steps: (1) Compare each param against range and compute alert level, (2) Analyze trend direction from history, (3) Cross-check thermal-hydraulic consistency (temp+pressure+flow must be coherent), (4) Check material stress at given temperature, (5) Generate specific actionable recommendation.
 JSON shape: {"alert_level":"SAFE|MONITOR|WARNING|CRITICAL","confidence":85,"efficiency":94.2,"temperature_pct":91,"pressure_pct":88,"neutron_flux":"2.4e13","control_rod_position":68,"xenon_level":1.2,"reasoning":[{"step":1,"action":"...","result":"..."}],"recommendations":[{"title":"...","desc":"...","severity":"safe|warning|critical|info"}],"cross_module_impacts":[{"module":"thermal|materials|safety","impact":"..."}],"trend_analysis":"...","benchmarks":"..."}`,
-  thermal: `THERMAL & POWER MODULE. Ranges: Power 0-4000 MW, Coolant 250-320C (optimal 280-300).
-Calculate output, efficiency, thermal_load, heat_rate. Assess steam_generator/turbine/condenser status.
+
+  thermal: `THERMAL & POWER MODULE. Operating ranges (STRICT):
+- Target Power: 0-4000 MWth. Typical large PWR: 3000-3400 MWth.
+- Coolant Temperature: 250-320°C. Optimal inlet: 280-295°C. Outlet: 310-330°C. Delta-T ~30-40°C.
+
+CALCULATIONS (use these formulas):
+- Thermal efficiency: Carnot-limited. Typical PWR: 33-37%. Use base 94% of theoretical max, penalize for deviation from optimal coolant temp.
+- Current output (MWe): target_power * (efficiency/100) * 0.33 (thermal-to-electric conversion)
+- Thermal load: current_output * 0.92
+- Heat rate: 10000-11000 BTU/kWh typical. Higher = less efficient. Formula: 3412/efficiency * 100
+
+COMPONENT STATUS RULES:
+- Steam Generator: WARNING if coolant temp >310°C or <260°C, else OPTIMAL
+- Turbine: WARNING if efficiency <85%, CRITICAL if <75%, else OPTIMAL  
+- Condenser: WARNING if heat_rate >11500, else OPTIMAL
+
+Steps: (1) Validate inputs against ranges, (2) Calculate all outputs using formulas, (3) Assess component status, (4) Cross-reference with reactor conditions if in history, (5) Recommend.
 JSON shape: {"alert_level":"...","confidence":90,"current_output":3100,"efficiency":94.5,"thermal_load":2852,"heat_rate":10680,"steam_generator":"OPTIMAL","turbine":"OPTIMAL","condenser":"OPTIMAL","reasoning":[...],"recommendations":[...],"cross_module_impacts":[...],"trend_analysis":"..."}`,
-  materials: `MATERIALS MODULE. Steps: (1) Compare vs yield strength, (2) Check irradiation embrittlement, (3) Calculate remaining life, (4) Check corrosion, (5) Recommend.
+
+  materials: `MATERIALS MODULE. Steps: (1) Compare degradation % vs yield strength baseline — over 15% is WARNING, over 25% is CRITICAL, (2) Check irradiation embrittlement risk based on degradation rate — Low(<5%), Moderate(5-10%), Elevated(10-20%), High(>20%), (3) Calculate remaining life: (100 - degradation) / 1.5 months approx, (4) Corrosion rate: degradation * 0.3 mm/year approx, (5) Recommend: Safe(<10%), Monitor(10-15%), Replace(>15%).
+Common nuclear materials: Zircaloy-4 (fuel cladding, limit 1200°C), Inconel-600 (steam generators), SS-316L (internals), Carbon Steel SA-508 (pressure vessel).
 JSON shape: {"alert_level":"...","confidence":88,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":54,"corrosion_rate":0.4,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
-  energy: `EGM MODULE. Piezoelectric energy from foot traffic. Steps: (1) Calc steps/min/m2, (2) Apply ~3.5% piezo efficiency, (3) Subtract ~12% conditioning losses, (4) Project daily (16hr) & monthly yield, (5) Identify optimal zones.
+
+  energy: `EGM (Energy-Generating Mat) MODULE. Piezoelectric energy harvesting. USE THESE EXACT FORMULAS:
+Step 1: Traffic density = foot_traffic_per_min / area_sqm (steps/min/m²)
+Step 2: Raw power (W) = foot_traffic_per_min × area_sqm × 0.035 (3.5% piezo conversion of ~1W per step)
+Step 3: Net power (W) = raw_power × 0.88 (12% signal conditioning loss)
+Step 4: Daily energy (kWh) = net_power × 16 hours / 1000
+Step 5: Monthly energy (kWh) = daily × 30
+Step 6: Annual revenue (USD) = monthly × 12 × $0.12/kWh (Rwanda grid rate)
+
+EFFICIENCY: net_power/raw_power × 3.5 ≈ 3.08%
+Mat lifespan: ~5 years typical. Degradation ~2%/year.
+
+DEPLOYMENT INSIGHTS: High traffic zones (>60 steps/min/m²) = premium placement. Low traffic (<20) = not cost effective. ROI breakeven typically 2-3 years for high traffic areas.
 JSON shape: {"alert_level":"...","confidence":92,"raw_power_w":15.75,"net_power_w":13.86,"daily_kwh":0.22,"monthly_kwh":6.65,"efficiency_pct":3.08,"annual_revenue_usd":0.80,"reasoning":[...],"recommendations":[...],"trend_analysis":"...","deployment_insights":"..."}`
 };
 
