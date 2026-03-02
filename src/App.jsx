@@ -1205,7 +1205,7 @@ function SafetyPage({token,userId}){
       setAiRecs(parseRecs(ai.recommendations));
       setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps((ai.regulatory_gaps||[]).map(g=>typeof g==='string'?g:safeText(g)));
       // Update compliance status based on AI assessment
-      const compStatus = ai.alert_level==='SAFE'||ai.alert_level==='MONITOR'?'COMPLIANT':'NON-COMPLIANT';
+      const compStatus = ai.alert_level==='SAFE'||ai.alert_level==='MONITOR'?'COMPLIANT':'NON_COMPLIANT';
       if(freshComp){
         for(const c of freshComp){
           await dbPatch('nuclear_compliance',c.id,{status:compStatus},token);
@@ -1223,7 +1223,7 @@ function SafetyPage({token,userId}){
       setAiRecs(parseRecs(ai.recommendations));
       setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps((ai.regulatory_gaps||[]).map(g=>typeof g==='string'?g:safeText(g)));
       // Update compliance statuses based on AI assessment
-      const compStatus = ai.alert_level==='SAFE'||ai.alert_level==='MONITOR'?'COMPLIANT':'NON-COMPLIANT';
+      const compStatus = ai.alert_level==='SAFE'||ai.alert_level==='MONITOR'?'COMPLIANT':'NON_COMPLIANT';
       if(comp.length){
         for(const c of comp){await dbPatch('nuclear_compliance',c.id,{status:compStatus,last_review:new Date().toISOString().slice(0,10)},token)}
         const updated=await dbGet('nuclear_compliance',token,'order=standard_name.asc');if(updated)setComp(updated);
