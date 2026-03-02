@@ -275,6 +275,21 @@ function getRpmReset() {
   const oldest = Math.min(..._rpmTimestamps.filter(t => now - t < 60000));
   return Math.max(0, Math.ceil((oldest + 60000 - now) / 1000));
 }
+// Get next reset time (midnight PT) displayed in user's local timezone
+function getResetTimeLocal() {
+  const now = new Date();
+  // Get current date in Pacific Time
+  const ptNow = new Date(now.toLocaleString('en-US', {timeZone:'America/Los_Angeles'}));
+  // Next midnight PT = start of next PT day
+  const nextMidnightPT = new Date(ptNow);
+  nextMidnightPT.setDate(nextMidnightPT.getDate() + 1);
+  nextMidnightPT.setHours(0,0,0,0);
+  // Convert back: difference in ms from ptNow to next midnight PT
+  const msUntilReset = nextMidnightPT - ptNow;
+  const resetLocal = new Date(now.getTime() + msUntilReset);
+  return resetLocal.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:true});
+}
+
 function trackRpm() {
   _rpmTimestamps.push(Date.now());
   if (_rpmCallback) _rpmCallback(getRpm());
@@ -361,7 +376,7 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
   if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   // Pre-check: don't even try if daily limit exhausted
   if (getAiCount().count >= AI_DAILY_LIMIT) {
-    setGlobalAiStatus(`Llyana AI daily analysis limit reached (${AI_DAILY_LIMIT} analyses/day). Resets at 10:00 AM SAST. Contact admin to upgrade.`);
+    setGlobalAiStatus(`Llyana AI daily limit reached (${AI_DAILY_LIMIT}/day). Resets at ${getResetTimeLocal()}.`);
     setTimeout(()=>setGlobalAiStatus(null),8000);
     return null;
   }
@@ -382,7 +397,7 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
       const isDaily = errBody.includes('RESOURCE_EXHAUSTED') || currentCount >= AI_DAILY_LIMIT;
       if (isDaily || currentCount >= AI_DAILY_LIMIT) {
         if (currentCount < AI_DAILY_LIMIT) syncToApiLimit();
-        setGlobalAiStatus(`Llyana AI daily limit reached. Resets at 10:00 AM SAST.`);
+        setGlobalAiStatus(`Llyana AI daily limit reached. Resets at ${getResetTimeLocal()}.`);
         setTimeout(()=>setGlobalAiStatus(null),8000);
         return null;
       }
@@ -762,11 +777,11 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rp
           {aiCount>=AI_DAILY_LIMIT&&<div style={{background:C.red+'12',border:`1px solid ${C.red}30`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
             <span style={{fontSize:'16px'}}>⚡</span>
             <div><div style={{fontSize:'12px',fontWeight:600,color:C.red}}>Llyana AI Daily Limit Reached</div>
-            <div style={{fontSize:'11px',color:C.dim,marginTop:2}}>All {AI_DAILY_LIMIT} analyses used today. AI features will resume at 10:00 AM SAST. Contact your administrator to upgrade for unlimited analyses.</div></div>
+            <div style={{fontSize:'11px',color:C.dim,marginTop:2}}>All {AI_DAILY_LIMIT} analyses used today. AI features will resume at {getResetTimeLocal()}.</div></div>
           </div>}
           {aiCount>=Math.floor(AI_DAILY_LIMIT*0.75)&&aiCount<AI_DAILY_LIMIT&&<div style={{background:C.orange+'10',border:`1px solid ${C.orange}25`,borderRadius:10,padding:'10px 14px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
             <span style={{fontSize:'14px'}}>⚠</span>
-            <div style={{fontSize:'11px',color:C.dim}}><span style={{fontWeight:600,color:C.orange}}>Llyana AI:</span> {Math.max(0,AI_DAILY_LIMIT-aiCount)} analyses remaining today. Use them wisely — resets at 10:00 AM SAST.</div>
+            <div style={{fontSize:'11px',color:C.dim}}><span style={{fontWeight:600,color:C.orange}}>Llyana AI:</span> {Math.max(0,AI_DAILY_LIMIT-aiCount)} analyses remaining today. Use them wisely — resets at {getResetTimeLocal()}.</div>
           </div>}
           {children}
         </main>
