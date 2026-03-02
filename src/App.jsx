@@ -182,14 +182,15 @@ let _aiStatusCallback = null;
 function setGlobalAiStatus(msg) { if (_aiStatusCallback) _aiStatusCallback(msg); }
 
 // AI request counter (persists per day in sessionStorage)
-const AI_DAILY_LIMIT = 20;
+const AI_DAILY_LIMIT = 1000;
 function getAiCount() {
   try {
     const d = JSON.parse(sessionStorage.getItem('llyana_ai_usage') || '{}');
-    const today = new Date().toISOString().slice(0, 10);
-    if (d.date !== today) return { date: today, count: 0 };
+    // Google resets RPD at midnight Pacific Time
+    const ptDate = new Date().toLocaleDateString('en-CA', {timeZone:'America/Los_Angeles'});
+    if (d.date !== ptDate) return { date: ptDate, count: 0 };
     return d;
-  } catch { return { date: new Date().toISOString().slice(0, 10), count: 0 }; }
+  } catch { return { date: new Date().toLocaleDateString('en-CA', {timeZone:'America/Los_Angeles'}), count: 0 }; }
 }
 function incAiCount() {
   const d = getAiCount();
@@ -209,6 +210,9 @@ function buildBrainContext(currentModule) {
   if (!otherModules.length) return '';
   const brain = otherModules.map(m => {
     const r = _lastAiResponse[m];
+    if (m === 'safety_resolution') {
+      return `SAFETY RESOLUTION EVENT: ${r.trend_analysis||'Alert resolved'}`;
+    }
     return `${m.toUpperCase()}: alert=${r.alert_level||'UNKNOWN'}, confidence=${r.confidence||'?'}%` +
       (r.efficiency ? `, efficiency=${r.efficiency}%` : '') +
       (r.recommendations?.length ? `, flags=[${(r.recommendations||[]).slice(0,3).map(x=>x.title||x).join('; ')}]` : '') +
@@ -217,7 +221,27 @@ function buildBrainContext(currentModule) {
   return `\nCROSS-MODULE INTELLIGENCE (you are ONE AI brain — Llyana — operating across all modules. Here is what you found in other modules. Use this to inform your analysis, flag cascading risks, and provide holistic recommendations):\n${brain}`;
 }
 
-async function geminiAnalyze(module, params, history = []) {
+// Save AI analysis to Supabase log (fire and forget)
+function saveAiLog(module, params, parsed, token, userId) {
+  if (!token || !parsed) return;
+  dbPost('ai_analysis_log', {
+    module, alert_level: parsed.alert_level, confidence: parsed.confidence || null,
+    input_params: params, reasoning: parsed.reasoning || [],
+    recommendations: parsed.recommendations || [], cross_module_impacts: parsed.cross_module_impacts || [],
+    trend_analysis: typeof parsed.trend_analysis === 'string' ? parsed.trend_analysis : JSON.stringify(parsed.trend_analysis || ''),
+    benchmarks: typeof parsed.benchmarks === 'string' ? parsed.benchmarks : JSON.stringify(parsed.benchmarks || ''),
+    full_response: parsed, user_id: userId
+  }, token).catch(e => console.warn('Llyana: Log save failed', e));
+}
+
+// Load last AI log for a module from Supabase
+async function loadLastAiLog(module, token) {
+  if (!token) return null;
+  const logs = await dbGet('ai_analysis_log', token, `module=eq.${module}&order=created_at.desc&limit=1`);
+  return logs?.[0] || null;
+}
+
+async function geminiAnalyze(module, params, history = [], token = null, userId = null) {
   if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
   const prevAi = _lastAiResponse[module] ? `\nYOUR PREVIOUS ANALYSIS FOR THIS MODULE (build upon it, note changes, compare trends):\n${JSON.stringify({alert_level:_lastAiResponse[module].alert_level,confidence:_lastAiResponse[module].confidence,efficiency:_lastAiResponse[module].efficiency,recommendations:(_lastAiResponse[module].recommendations||[]).map(r=>r.title),trend_analysis:_lastAiResponse[module].trend_analysis})}` : '';
@@ -230,7 +254,7 @@ async function geminiAnalyze(module, params, history = []) {
       body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. KEEP YOUR RESPONSE COMPACT — max 5 reasoning steps, max 3 recommendations, max 3 cross-module impacts. JSON only, no trailing text.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:4000} })
     });
     if (r.status === 429) {
-      const wait = retryNum === 0 ? 8 : 15;
+      const wait = retryNum === 0 ? 5 : 10;
       setGlobalAiStatus(`AI rate limit reached. Retrying in ${wait}s...`);
       console.log(`Llyana: Rate limited, waiting ${wait}s...`);
       await new Promise(x=>setTimeout(x,wait*1000));
@@ -248,6 +272,8 @@ async function geminiAnalyze(module, params, history = []) {
     // Store for continuity + cross-module brain
     _lastAiResponse[module] = parsed;
     try { sessionStorage.setItem('llyana_ai_prev_'+module, JSON.stringify(parsed)); } catch {}
+    // Save to persistent Supabase log
+    saveAiLog(module, params, parsed, token, userId);
     return parsed;
   };
   try {
@@ -275,6 +301,9 @@ function safeText(v) {
   if (typeof v === 'object') return Object.entries(v).map(([k,val]) => `${k}: ${val}`).join('. ');
   return String(v);
 }
+
+// Persist and restore AI analysis state per module
+
 
 // ── Global CSS with unique per-module transitions ───────────
 const CSS=`
@@ -447,7 +476,7 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount}){
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:6,height:6,borderRadius:'50%',background:sysStatus.color,animation:'pulse 2s infinite'}}/><span style={{fontSize:'9px',color:C.muted,letterSpacing:'.5px'}}>SYSTEM STATUS</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>Status: <span style={{color:sysStatus.color}}>{sysStatus.label}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>DB: <span style={{color:sysStatus.dbOk?C.green:C.red}}>{sysStatus.dbOk?'CONNECTED':'OFFLINE'}</span></div>
-          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<15?C.cyan:aiCount<19?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<900?C.cyan:aiCount<980?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.muted,marginTop:2}}>Resets: <span style={{color:C.dim}}>{resetTimer}</span></div>
         </div>
       </aside>
@@ -509,12 +538,21 @@ function ReactorPage({token,userId}){
   const[res,setRes]=useState(null);const[ak,setAk]=useState(0);const[saving,setSaving]=useState(false);const[history,setHistory]=useState([]);const[lastRead,setLastRead]=useState(null);
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[benchInfo,setBenchInfo]=useState('');const[confidence,setConfidence]=useState(null);
 
-  useEffect(()=>{if(!token)return;dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);
-    // Auto-analyze last reading with fallback (no AI call to save quota)
-    const t=+d[0].core_temp,p=+d[0].pressure,f=+d[0].flow_rate;
-    if(!isNaN(t)&&!isNaN(p)&&!isNaN(f)){const fb=fallback(t,p,f);setRes({eff:fb.eff,tPct:fb.tPct,pPct:fb.pPct,recs:fb.recs,overall:fb.overall});setAk(1)}
-    // Leave inputs empty for new entry
-  }});},[token]);
+  useEffect(()=>{if(!token)return;
+    // Load last AI log from Supabase for persistent insights
+    loadLastAiLog('reactor',token).then(log=>{
+      if(log?.full_response){
+        const ai=log.full_response;
+        const recs=(ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'}));
+        if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
+        const eff=+(ai.efficiency||95),tPct=+(ai.temperature_pct||90),pPct=+(ai.pressure_pct||88);
+        setRes({eff,tPct,pPct,recs,overall:ai.alert_level||'SAFE'});setAk(1);
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+        setTrendInfo(safeText(ai.trend_analysis));setBenchInfo(safeText(ai.benchmarks));
+        _lastAiResponse['reactor']=ai;
+      }
+    });
+    dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=10').then(d=>{if(d?.length){setHistory(d);setLastRead(d[0]);}});},[token]);
 
   const fallback=(t,p,f)=>{
     const eff=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(p-155)*.05));const tPct=Math.min(99,Math.max(50,85+(t/600)*15-Math.abs(t-550)*.02));const pPct=Math.min(99,Math.max(50,80+(p/180)*20-Math.abs(p-155)*.1));
@@ -529,19 +567,21 @@ function ReactorPage({token,userId}){
   const run=async()=>{
     const t=parseFloat(ct),p=parseFloat(pr),f=parseFloat(fr);if(isNaN(t)||isNaN(p)||isNaN(f))return;
     setSaving(true);setAiActive(true);
-    const ai=await geminiAnalyze('reactor',{core_temp:t,pressure:p,flow_rate:f},history);
+    const ai=await geminiAnalyze('reactor',{core_temp:t,pressure:p,flow_rate:f},history,token,userId);
     let eff,tPct,pPct,recs,overall,nFlux,cRod,xenon;
     if(ai){
       eff=+(ai.efficiency||95);tPct=+(ai.temperature_pct||90);pPct=+(ai.pressure_pct||88);overall=ai.alert_level||'SAFE';
       recs=(ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'}));
       if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
       nFlux=ai.neutron_flux||(2.2+Math.random()*.4).toFixed(1)+'e13';cRod=ai.control_rod_position||Math.round(60+Math.random()*15);xenon=ai.xenon_level||+(1+Math.random()*.5).toFixed(1);
-      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(safeText(ai.trend_analysis));setBenchInfo(safeText(ai.benchmarks));
+    const _reasoning=ai?.reasoning||[];const _cross=ai?.cross_module_impacts||[];const _trend=safeText(ai?.trend_analysis);const _bench=safeText(ai?.benchmarks);const _conf=ai?.confidence||null;
+    setConfidence(_conf);setReasoning(_reasoning);setCrossImpacts(_cross);setTrendInfo(_trend);setBenchInfo(_bench);
     } else {
       const fb=fallback(t,p,f);eff=fb.eff;tPct=fb.tPct;pPct=fb.pPct;recs=fb.recs;overall=fb.overall;nFlux=fb.nFlux;cRod=fb.cRod;xenon=fb.xenon;
       setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');setBenchInfo('');
     }
     setRes({eff,tPct,pPct,recs,overall});setAk(k=>k+1);setAiActive(false);
+    // Persist AI insights
     if(token){
       const row={core_temp:t,pressure:p,flow_rate:f,efficiency:eff,alert_level:overall,neutron_flux:String(nFlux),control_rod_position:typeof cRod==='number'?cRod:parseInt(cRod),xenon_level:typeof xenon==='number'?xenon:parseFloat(xenon),user_id:userId};
       await dbPost('nuclear_reactor_readings',row,token);
@@ -586,19 +626,29 @@ function ReactorPage({token,userId}){
 // ═══════════════════════════════════════════════════════════════
 function ThermalPage({token,userId}){
   const[tp,setTp]=useState('');const[ct,setCt]=useState('');const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);
-  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[confidence,setConfidence]=useState(null);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20').then(d=>{if(d?.length)setReadings(d)});},[token]);
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);
+  useEffect(()=>{if(!token)return;
+    loadLastAiLog('thermal',token).then(log=>{
+      if(log?.full_response){
+        const ai=log.full_response;
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(safeText(ai.trend_analysis));
+        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        _lastAiResponse['thermal']=ai;
+      }
+    });
+    dbGet('nuclear_thermal_readings',token,'order=created_at.desc&limit=20').then(d=>{if(d?.length)setReadings(d)});},[token]);
   const save=async()=>{setSaving(true);setAiActive(true);const t=parseFloat(tp),c=parseFloat(ct);if(isNaN(t)||isNaN(c)){setSaving(false);setAiActive(false);return}
-    const ai=await geminiAnalyze('thermal',{target_power:t,coolant_temp:c},readings);
+    const ai=await geminiAnalyze('thermal',{target_power:t,coolant_temp:c},readings,token,userId);
     let eff,out,therm,hr,sgSt,tSt,cSt;
     if(ai){
       eff=+(ai.efficiency||94);out=+(ai.current_output||Math.round(t*(eff/100)));therm=+(ai.thermal_load||Math.round(out*.92));hr=+(ai.heat_rate||10600);
       sgSt=ai.steam_generator||'OPTIMAL';tSt=ai.turbine||'OPTIMAL';cSt=ai.condenser||'OPTIMAL';
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(safeText(ai.trend_analysis));
+      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
     } else {
       eff=Math.min(99,Math.max(70,94-(Math.abs(t-3200)*.002)-(Math.abs(c-290)*.1)));out=Math.round(t*(eff/100));therm=Math.round(out*.92);hr=Math.round(10500+Math.random()*500);
       sgSt='OPTIMAL';tSt=eff>85?'OPTIMAL':'WARNING';cSt='OPTIMAL';
-      setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');
+      setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');setAiRecs([]);
     }
     setAiActive(false);
     await dbPost('nuclear_thermal_readings',{target_power:t,current_output:out,coolant_temp:c,efficiency:Math.round(eff*10)/10,thermal_load:therm,heat_rate:hr,steam_generator_status:sgSt,turbine_status:tSt,condenser_status:cSt,user_id:userId},token);
@@ -613,6 +663,7 @@ function ThermalPage({token,userId}){
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Power Output History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.current_output||0).reverse()} color={C.red} showArea label={`Last ${readings.length} readings`}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency||0).reverse()} color={C.green} showArea label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.22}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
@@ -634,10 +685,17 @@ function MaterialsPage({token,userId}){
   const[mats,setMats]=useState([]);const[sel,setSel]=useState('');const[saving,setSaving]=useState(false);
   const[newName,setNewName]=useState('');const[newDeg,setNewDeg]=useState('');
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_materials',token,'order=material_name.asc').then(d=>{if(d?.length){setMats(d);setSel(d[0].id)}});},[token]);
+  useEffect(()=>{if(!token)return;
+    loadLastAiLog('materials',token).then(log=>{
+      if(log?.full_response){const ai=log.full_response;
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        _lastAiResponse['materials']=ai;}
+    });
+    dbGet('nuclear_materials',token,'order=material_name.asc').then(d=>{if(d?.length){setMats(d);setSel(d[0].id)}});},[token]);
   const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;setSaving(true);setAiActive(true);
     const deg=parseFloat(newDeg);
-    const ai=await geminiAnalyze('materials',{material_name:newName,degradation_pct:deg},mats);
+    const ai=await geminiAnalyze('materials',{material_name:newName,degradation_pct:deg},mats,token,userId);
     let st,remLife,corrRate;
     if(ai){
       st=ai.alert_level==='SAFE'?'safe':ai.alert_level==='MONITOR'?'monitor':'warning';
@@ -692,12 +750,20 @@ function OperationsPage({token,userId}){
   const[tasks,setTasks]=useState([]);const[filter,setFilter]=useState('All');const[hov,setHov]=useState(null);
   const[saving,setSaving]=useState(false);const[newTask,setNewTask]=useState('');const[newDate,setNewDate]=useState('');const[newPri,setNewPri]=useState('MEDIUM');const[newHrs,setNewHrs]=useState('4');
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);const[schedInsights,setSchedInsights]=useState('');const[plantAvail,setPlantAvail]=useState(null);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_maintenance',token,'order=scheduled_date.asc').then(d=>{if(d)setTasks(d)});},[token]);
+  useEffect(()=>{if(!token)return;
+    loadLastAiLog('operations',token).then(log=>{
+      if(log?.full_response){const ai=log.full_response;
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setSchedInsights(safeText(ai.scheduling_insights));setPlantAvail(ai.plant_availability_pct||null);
+        _lastAiResponse['operations']=ai;}
+    });
+    dbGet('nuclear_maintenance',token,'order=scheduled_date.asc').then(d=>{if(d)setTasks(d)});},[token]);
   const add=async()=>{if(!newTask||!newDate)return;setSaving(true);setAiActive(true);
     await dbPost('nuclear_maintenance',{task_name:newTask,scheduled_date:newDate,duration_hours:parseFloat(newHrs)||4,priority:newPri,status:'scheduled',assigned_team:'Team Alpha',user_id:userId},token);
     const f=await dbGet('nuclear_maintenance',token,'order=scheduled_date.asc');if(f)setTasks(f);
     // Run AI analysis on full task list
-    const ai=await geminiAnalyze('operations',{new_task:{name:newTask,date:newDate,priority:newPri,hours:newHrs},all_tasks:f||tasks},f||tasks);
+    const ai=await geminiAnalyze('operations',{new_task:{name:newTask,date:newDate,priority:newPri,hours:newHrs},all_tasks:f||tasks},f||tasks,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
       setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
@@ -748,15 +814,75 @@ function SafetyPage({token,userId}){
   const[newStd,setNewStd]=useState('');const[newCode,setNewCode]=useState('');
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[safetyPosture,setSafetyPosture]=useState('');const[regGaps,setRegGaps]=useState([]);
   useEffect(()=>{if(!token)return;
+    loadLastAiLog('safety',token).then(log=>{
+      if(log?.full_response){const ai=log.full_response;
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
+        _lastAiResponse['safety']=ai;}
+    });
     dbGet('alerts',token,'order=created_at.desc&limit=20').then(d=>{if(d)setAlerts(d)});
     dbGet('nuclear_compliance',token,'order=standard_name.asc').then(d=>{if(d)setComp(d)});
   },[token]);
-  const resolve=async(id)=>{await dbPatch('alerts',id,{status:'resolved',resolved_at:new Date().toISOString()},token);const f=await dbGet('alerts',token,'order=created_at.desc&limit=20');if(f)setAlerts(f);};
+  const[resolving,setResolving]=useState(null);const[resolveNote,setResolveNote]=useState('');const[resolveResult,setResolveResult]=useState(null);
+  const startResolve=(id)=>{setResolving(id);setResolveNote('');setResolveResult(null)};
+  const cancelResolve=()=>{setResolving(null);setResolveNote('');setResolveResult(null)};
+  const confirmResolve=async()=>{if(!resolveNote.trim())return;
+    const alert=alerts.find(a=>a.id===resolving);
+    setResolveResult('analyzing');
+    // AI validates the resolution with full cross-module context
+    const ai=await geminiAnalyze('safety',{
+      action:'validate_resolution',
+      alert_being_resolved:{title:alert?.title,description:alert?.description,alert_level:alert?.alert_level,created_at:alert?.created_at},
+      operator_resolution_note:resolveNote,
+      active_alerts:alerts.filter(a=>a.status==='active'&&a.id!==resolving),
+      compliance_standards:comp
+    },alerts,token,userId);
+    // Update alert in database
+    await dbPatch('alerts',resolving,{status:'resolved',resolved_at:new Date().toISOString()},token);
+    // Log full resolution with AI assessment
+    await dbPost('ai_analysis_log',{module:'safety',alert_level:ai?.alert_level||'INFO',confidence:ai?.confidence||100,
+      input_params:{action:'alert_resolved',alert_id:resolving,alert_title:alert?.title,alert_level:alert?.alert_level,operator_note:resolveNote},
+      reasoning:ai?.reasoning||[{step:1,action:'Alert resolved by operator',result:resolveNote}],
+      recommendations:ai?.recommendations||[],cross_module_impacts:ai?.cross_module_impacts||[],
+      trend_analysis:safeText(ai?.trend_analysis||'Alert resolved'),
+      full_response:ai||{alert_level:'INFO',action:'resolve',note:resolveNote},user_id:userId},token);
+    // Update AI display
+    if(ai){
+      setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
+    }
+    const approved=ai?.alert_level==='SAFE'||ai?.alert_level==='MONITOR';
+    setResolveResult(approved?'approved':'flagged');
+    // CROSS-MODULE PROPAGATION — update brain so all modules know about resolution
+    _lastAiResponse['safety_resolution'] = {
+      alert_level: approved?'SAFE':'WARNING',
+      confidence: ai?.confidence||100,
+      recommendations: [{title:`Alert "${alert?.title}" resolved`,desc:resolveNote}],
+      trend_analysis: `Resolution ${approved?'approved':'flagged'} by AI: ${alert?.title} — ${resolveNote.slice(0,100)}`
+    };
+    // Log cross-module events so each module picks up the resolution on next load
+    const impactedModules = (ai?.cross_module_impacts||[]).map(c=>c.module).filter(Boolean);
+    const allModules = ['reactor','thermal','materials','operations','energy'];
+    const modulesToNotify = impactedModules.length ? impactedModules : allModules;
+    for(const mod of modulesToNotify){
+      await dbPost('ai_analysis_log',{module:mod,alert_level:'INFO',confidence:100,
+        input_params:{action:'cross_module_resolution_notice',source_module:'safety',resolved_alert:alert?.title,resolution_note:resolveNote,ai_verdict:approved?'approved':'flagged'},
+        reasoning:[{step:1,action:`Safety alert "${alert?.title}" resolved`,result:`Operator action: ${resolveNote.slice(0,150)}. AI verdict: ${approved?'Resolution adequate':'Resolution flagged for review'}.`}],
+        recommendations:ai?.recommendations||[],cross_module_impacts:[{module:'safety',impact:`Alert "${alert?.title}" has been resolved. ${approved?'Corrective action validated by AI.':'AI flagged concerns — monitor closely.'}`}],
+        trend_analysis:`Cross-module update: Safety alert resolved. ${approved?'System safety posture improved.':'Review recommended.'}`,
+        full_response:{alert_level:'INFO',source:'safety_resolution',resolved_alert:alert?.title,verdict:approved?'approved':'flagged'},
+        user_id:userId},token).catch(()=>{});
+    }
+    const f=await dbGet('alerts',token,'order=created_at.desc&limit=20');if(f)setAlerts(f);
+    setTimeout(()=>{setResolving(null);setResolveNote('');setResolveResult(null)},4000);
+  };
   const addComp=async()=>{if(!newStd)return;setSaving(true);setAiActive(true);
     await dbPost('nuclear_compliance',{standard_name:newStd,standard_code:newCode||null,last_review:new Date().toISOString().slice(0,10),status:'PENDING',user_id:userId},token);
     const freshComp=await dbGet('nuclear_compliance',token,'order=standard_name.asc');if(freshComp)setComp(freshComp);
     // Run AI safety analysis
-    const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:freshComp||comp,new_standard:{name:newStd,code:newCode}},alerts);
+    const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:freshComp||comp,new_standard:{name:newStd,code:newCode}},alerts,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
       setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
@@ -764,7 +890,7 @@ function SafetyPage({token,userId}){
     } else { setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setTrendInfo('');setSafetyPosture('');setRegGaps([]); }
     setAiActive(false);setNewStd('');setNewCode('');setSaving(false);};
   const runSafetyAudit=async()=>{setAiActive(true);
-    const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:comp},alerts);
+    const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:comp},alerts,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
       setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
@@ -783,9 +909,23 @@ function SafetyPage({token,userId}){
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Safety Alerts" delay={.1}>
           {alerts.length?alerts.map((a,i)=>{const ac=alC[a.alert_level]||C.gray;return(<div key={a.id} style={{background:ac+'08',border:`1px solid ${ac}20`,borderRadius:10,padding:'14px 16px',marginBottom:8,animation:`fadeUp .3s ease-out ${i*.06}s both`}}>
-            <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:'13px',fontWeight:600}}>{a.title||'Alert'}</div><div style={{display:'flex',gap:6,alignItems:'center'}}><span style={{fontSize:'9px',fontWeight:700,color:a.status==='resolved'?C.green:a.status==='monitoring'?C.yellow:C.cyan}}>{a.status?.toUpperCase()}</span>{a.status==='active'&&<button onClick={()=>resolve(a.id)} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'8px',padding:'2px 6px',cursor:'pointer'}}>Resolve</button>}</div></div>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:'13px',fontWeight:600}}>{a.title||'Alert'}</div><div style={{display:'flex',gap:6,alignItems:'center'}}><span style={{fontSize:'9px',fontWeight:700,color:a.status==='resolved'?C.green:a.status==='monitoring'?C.yellow:C.cyan}}>{a.status?.toUpperCase()}</span>{a.status==='active'&&resolving!==a.id&&<button onClick={()=>startResolve(a.id)} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'8px',padding:'2px 6px',cursor:'pointer'}}>Resolve</button>}</div></div>
             <div style={{fontSize:'11px',color:C.dim,marginBottom:4}}>{a.description||''}</div>
             <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:'9px',color:C.muted,fontFamily:'monospace'}}>{a.created_at?new Date(a.created_at).toLocaleString():''}</span><span style={{fontSize:'8px',background:ac+'15',color:ac,padding:'2px 6px',borderRadius:3,fontWeight:600}}>{a.alert_level}</span></div>
+            {resolving===a.id&&<div style={{marginTop:12,padding:'14px',background:C.bg,borderRadius:10,border:`1px solid ${C.cyan}25`,animation:'fadeUp .3s'}}>
+              <div style={{fontSize:'12px',fontWeight:600,color:C.cyan,marginBottom:8}}>Resolution Report</div>
+              {resolveResult==='analyzing'?<div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 0'}}><div style={{width:14,height:14,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'11px',color:C.cyan}}>Llyana AI is validating resolution...</span></div>
+              :resolveResult==='approved'?<div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',background:C.greenDim,borderRadius:8,border:`1px solid ${C.green}25`}}><span style={{color:C.green,fontSize:'14px'}}>{'\u2713'}</span><div><div style={{fontSize:'12px',fontWeight:600,color:C.green}}>Resolution Approved</div><div style={{fontSize:'10px',color:C.dim}}>AI has validated the corrective action. Alert resolved.</div></div></div>
+              :resolveResult==='flagged'?<div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}25`}}><span style={{color:C.orange,fontSize:'14px'}}>{'\u26A0'}</span><div><div style={{fontSize:'12px',fontWeight:600,color:C.orange}}>Resolution Flagged</div><div style={{fontSize:'10px',color:C.dim}}>AI has concerns about this resolution. Alert resolved but flagged for review.</div></div></div>
+              :<div>
+                <textarea value={resolveNote} onChange={e=>setResolveNote(e.target.value)} placeholder="Describe the corrective action taken (required)..." rows={3} style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'10px 12px',color:C.text,fontSize:'12px',resize:'vertical',fontFamily:'inherit',outline:'none',boxSizing:'border-box',minHeight:70}}/>
+                <div style={{display:'flex',gap:8,marginTop:8}}>
+                  <button onClick={confirmResolve} disabled={!resolveNote.trim()} style={{flex:1,background:resolveNote.trim()?C.green:C.gray,border:'none',borderRadius:8,padding:'8px',color:'#fff',fontSize:'11px',fontWeight:600,cursor:resolveNote.trim()?'pointer':'not-allowed',opacity:resolveNote.trim()?1:.5}}>Submit & Validate</button>
+                  <button onClick={cancelResolve} style={{background:'transparent',border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 14px',color:C.dim,fontSize:'11px',cursor:'pointer'}}>Cancel</button>
+                </div>
+                <div style={{fontSize:'9px',color:C.muted,marginTop:6}}>Llyana AI will validate your corrective action against current system state</div>
+              </div>}
+            </div>}
           </div>)}):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No alerts. System clean.</div>}
         </Card>
         {safetyPosture&&<Card title="Safety Posture Assessment" delay={.15}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safetyPosture}</div></Card>}
@@ -820,17 +960,26 @@ function SafetyPage({token,userId}){
 function EnergyPage({token,userId}){
   const[ft,setFt]=useState('');const[area,setArea]=useState('');const[loc,setLoc]=useState('Main Entrance');
   const[saving,setSaving]=useState(false);const[readings,setReadings]=useState([]);const[model,setModel]=useState('ai');
-  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[deployInsights,setDeployInsights]=useState('');const[confidence,setConfidence]=useState(null);
-  useEffect(()=>{if(!token)return;dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12').then(d=>{if(d?.length)setReadings(d)});},[token]);
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[deployInsights,setDeployInsights]=useState('');const[confidence,setConfidence]=useState(null);const[crossImpacts,setCrossImpacts]=useState([]);const[aiRecs,setAiRecs]=useState([]);
+  useEffect(()=>{if(!token)return;
+    loadLastAiLog('energy',token).then(log=>{
+      if(log?.full_response){const ai=log.full_response;
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);
+        setTrendInfo(safeText(ai.trend_analysis));setDeployInsights(safeText(ai.deployment_insights));
+        setCrossImpacts(ai.cross_module_impacts||[]);setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        _lastAiResponse['energy']=ai;}
+    });
+    dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12').then(d=>{if(d?.length)setReadings(d)});},[token]);
   const calc=async()=>{const f=parseFloat(ft),a=parseFloat(area);if(isNaN(f)||isNaN(a))return;setSaving(true);setAiActive(true);
-    const ai=await geminiAnalyze('energy',{location:loc,foot_traffic_per_min:f,area_sqm:a},readings);
+    const ai=await geminiAnalyze('energy',{location:loc,foot_traffic_per_min:f,area_sqm:a},readings,token,userId);
     let raw,net,daily,monthly,eff;
     if(ai){
       raw=+(ai.raw_power_w||(f*a*3.5*.01));net=+(ai.net_power_w||(raw*.88));daily=+(ai.daily_kwh||(net*16/1000));monthly=+(ai.monthly_kwh||(daily*30));eff=+(ai.efficiency_pct||3.08);
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setTrendInfo(safeText(ai.trend_analysis));setDeployInsights(safeText(ai.deployment_insights));
+      setCrossImpacts(ai.cross_module_impacts||[]);setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
     } else {
       raw=f*a*3.5*.01;net=raw*(1-.12);daily=net*16/1000;monthly=daily*30;eff=3.5*(1-.12)*(1-(Math.random()*.02));
-      setConfidence(null);setReasoning([]);setTrendInfo('');setDeployInsights('');
+      setConfidence(null);setReasoning([]);setTrendInfo('');setDeployInsights('');setCrossImpacts([]);setAiRecs([]);
     }
     setAiActive(false);
     await dbPost('nuclear_egm_data',{location:loc,foot_traffic_per_min:f,area_sqm:a,raw_power_w:Math.round(raw*100)/100,net_power_w:Math.round(net*100)/100,daily_kwh:Math.round(daily*100)/100,monthly_kwh:Math.round(monthly*100)/100,efficiency_pct:Math.round(eff*100)/100,mat_condition:'good',user_id:userId},token);
@@ -848,6 +997,8 @@ function EnergyPage({token,userId}){
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency_pct||0).reverse()} color={C.green} label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {trendInfo&&<Card title="Traffic & Yield Trends" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.27}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.32}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
         {deployInsights&&<Card title="Deployment Insights" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{deployInsights}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
@@ -882,6 +1033,21 @@ export default function App(){
 
   // Wire up global AI status callback
   useEffect(()=>{_aiStatusCallback=setAiStatus;_aiCountCallback=setAiCount;return()=>{_aiStatusCallback=null;_aiCountCallback=null}},[]);
+
+  // Preload ALL modules' last AI responses into cross-module brain
+  useEffect(()=>{if(!token)return;
+    const modules=['reactor','thermal','materials','operations','safety','energy'];
+    modules.forEach(mod=>{
+      // First check sessionStorage for instant brain
+      try{const s=sessionStorage.getItem('llyana_ai_prev_'+mod);if(s){_lastAiResponse[mod]=JSON.parse(s);}}catch{}
+      // Then load from Supabase for persistence across sessions
+      loadLastAiLog(mod,token).then(log=>{
+        if(log?.full_response){_lastAiResponse[mod]=log.full_response;
+          try{sessionStorage.setItem('llyana_ai_prev_'+mod,JSON.stringify(log.full_response))}catch{}}
+      });
+    });
+    console.log('Llyana: Cross-module brain preloading all modules');
+  },[token]);
 
   useEffect(()=>{try{const s=sessionStorage.getItem('llyana_session');if(s){const p=JSON.parse(s);fetch(`${SB_URL}/auth/v1/user`,{headers:{Authorization:`Bearer ${p.token}`,apikey:SB_KEY}}).then(r=>{if(r.ok)setUser(p);else sessionStorage.removeItem('llyana_session');setLoading(false)}).catch(()=>{sessionStorage.removeItem('llyana_session');setLoading(false)});return}}catch(e){}setLoading(false)},[]);
   useEffect(()=>{try{sessionStorage.setItem('llyana_page',page)}catch(e){}},[page]);
