@@ -24,6 +24,7 @@ async function db(method,table,token,body,qs=''){
 const dbGet=(t,tk,qs)=>db('GET',t,tk,null,qs);
 const dbPost=(t,d,tk)=>db('POST',t,tk,d);
 const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
+const dbDelete=(t,id,tk)=>db('DELETE',t,tk,null,`id=eq.${id}`);
 
 // ── Gemini AI Engine ─────────────────────────────────────────
 // Gemini AI Key (encoded)
@@ -307,6 +308,16 @@ const C={bg:'#060608',bgCard:'#0D0D10',bgCardHover:'#131318',bgSidebar:'#0A0A0D'
 function getAlertLevel(v,min,max){if(v==null||isNaN(v))return'UNKNOWN';const d=Math.abs(v-(min+(max-min)/2))/((max-min)/2);return d<0.8?'SAFE':d<0.9?'MONITOR':d<1.0?'WARNING':'CRITICAL'}
 const AC={SAFE:C.green,MONITOR:C.yellow,WARNING:C.orange,CRITICAL:C.red,UNKNOWN:C.gray};
 
+// Parse AI recommendations from any Gemini response format
+function parseRecs(recs) {
+  return (recs||[]).map(r => {
+    const title = safeText(r.title||r.name||r.action||'Recommendation');
+    const desc = safeText(r.desc||r.description||r.detail||r.text||r.result||r.impact||'');
+    const sev = r.severity||r.sev||r.priority||'info';
+    return {title, desc, sev};
+  });
+}
+
 // Safely convert any AI response value to a renderable string
 function safeText(v) {
   if (v == null) return '';
@@ -569,7 +580,7 @@ function ReactorPage({token,userId}){
     loadLastAiLog('reactor',token).then(log=>{
       if(log?.full_response){
         const ai=log.full_response;
-        const recs=(ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'}));
+        const recs=parseRecs(ai.recommendations);
         if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
         const eff=+(ai.efficiency||95),tPct=+(ai.temperature_pct||90),pPct=+(ai.pressure_pct||88);
         setRes({eff,tPct,pPct,recs,overall:ai.alert_level||'SAFE'});setAk(1);
@@ -597,7 +608,7 @@ function ReactorPage({token,userId}){
     let eff,tPct,pPct,recs,overall,nFlux,cRod,xenon;
     if(ai){
       eff=+(ai.efficiency||95);tPct=+(ai.temperature_pct||90);pPct=+(ai.pressure_pct||88);overall=ai.alert_level||'SAFE';
-      recs=(ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'}));
+      recs=parseRecs(ai.recommendations);
       if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
       nFlux=ai.neutron_flux||(2.2+Math.random()*.4).toFixed(1)+'e13';cRod=ai.control_rod_position||Math.round(60+Math.random()*15);xenon=ai.xenon_level||+(1+Math.random()*.5).toFixed(1);
     const _reasoning=ai?.reasoning||[];const _cross=ai?.cross_module_impacts||[];const _trend=safeText(ai?.trend_analysis);const _bench=ai?.benchmarks||null;const _conf=ai?.confidence||null;
@@ -629,8 +640,8 @@ function ReactorPage({token,userId}){
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,borderTop:`1px solid ${C.border}`,paddingTop:16}}>{[['Neutron Flux',nf,'n/cm\u00B2s'],['Control Rod',cr,'Position'],['Xenon',xl,'Level']].map(([l,v,u])=>(<div key={l} className="card-hover" style={{background:C.bg,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`}}><div style={{fontSize:'9px',color:C.muted,textTransform:'uppercase'}}>{l}</div><div style={{fontFamily:'monospace',fontSize:'16px',fontWeight:700,margin:'4px 0 2px'}}>{v}</div><div style={{fontSize:'8px',color:C.muted}}>{u}</div></div>))}</div>
         </Card>
         {res&&<Card title="AI Insights" delay={.2}><div key={ak}>{res.recs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
-        {reasoning.length>0&&<Card title="Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
-        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`,animation:`fadeUp .3s ease-out ${i*.1}s both`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action||r.title||r.analysis||r.finding||r.check||'')}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result||r.outcome||r.detail||r.description||r.conclusion||r.assessment||'')}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`,animation:`fadeUp .3s ease-out ${i*.1}s both`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact||c.description||c.detail||c.text||c.assessment||'')}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
         {benchInfo&&<Card title="IAEA Benchmark Check" delay={.4}><div>{typeof benchInfo==='object'&&benchInfo!==null?Object.entries(benchInfo).map(([k,v],i)=>{
           const param=k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
@@ -678,7 +689,7 @@ function ThermalPage({token,userId}){
       if(log?.full_response){
         const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(safeText(ai.trend_analysis));
-        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setAiRecs(parseRecs(ai.recommendations));
         _lastAiResponse['thermal']=ai;
       }
     });
@@ -690,7 +701,7 @@ function ThermalPage({token,userId}){
       eff=+(ai.efficiency||94);out=+(ai.current_output||Math.round(t*(eff/100)));therm=+(ai.thermal_load||Math.round(out*.92));hr=+(ai.heat_rate||10600);
       sgSt=ai.steam_generator||'OPTIMAL';tSt=ai.turbine||'OPTIMAL';cSt=ai.condenser||'OPTIMAL';
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);setTrendInfo(safeText(ai.trend_analysis));
-      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setAiRecs(parseRecs(ai.recommendations));
     } else {
       eff=Math.min(99,Math.max(70,94-(Math.abs(t-3200)*.002)-(Math.abs(c-290)*.1)));out=Math.round(t*(eff/100));therm=Math.round(out*.92);hr=Math.round(10500+Math.random()*500);
       sgSt='OPTIMAL';tSt=eff>85?'OPTIMAL':'WARNING';cSt='OPTIMAL';
@@ -710,8 +721,8 @@ function ThermalPage({token,userId}){
         <Card title="Power Output History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.current_output||0).reverse()} color={C.red} showArea label={`Last ${readings.length} readings`}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency||0).reverse()} color={C.green} showArea label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
         {aiRecs.length>0&&<Card title="AI Insights" delay={.22}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
-        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
-        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action||r.title||r.analysis||r.finding||r.check||'')}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result||r.outcome||r.detail||r.description||r.conclusion||r.assessment||'')}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact||c.description||c.detail||c.text||c.assessment||'')}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
       </div>
       <Card title="Power Control" delay={.15}>
@@ -729,34 +740,65 @@ function ThermalPage({token,userId}){
 // ═══════════════════════════════════════════════════════════════
 function MaterialsPage({token,userId}){
   const[mats,setMats]=useState([]);const[sel,setSel]=useState('');const[saving,setSaving]=useState(false);
-  const[newName,setNewName]=useState('');const[newDeg,setNewDeg]=useState('');
+  const[newName,setNewName]=useState('');const[newDeg,setNewDeg]=useState('');const[deleting,setDeleting]=useState(null);
+  const deleteMat=async(id)=>{setDeleting(id);
+    const mat=mats.find(m=>m.id===id);
+    await dbDelete('nuclear_materials',id,token);
+    const f=await dbGet('nuclear_materials',token,'order=material_name.asc');
+    if(f){setMats(f);if(sel===id)setSel(f[0]?.id||'')}else{setMats([]);setSel('')}
+    // Notify cross-module brain
+    const event={alert_level:'INFO',confidence:100,
+      recommendations:[{title:`${mat?.material_name||'Material'} removed from tracking`}],
+      trend_analysis:`Material "${mat?.material_name}" (${mat?.degradation_pct}% degradation) removed from monitoring. Remaining tracked: ${(f||[]).length} materials.`};
+    _lastAiResponse['materials']=event;
+    try{sessionStorage.setItem('llyana_ai_prev_materials',JSON.stringify(event))}catch{}
+    // Log to all modules
+    const modules=['reactor','thermal','operations','safety','energy'];
+    for(const mod of modules){
+      dbPost('ai_analysis_log',{module:mod,alert_level:'INFO',confidence:100,
+        input_params:{action:'material_removed',material:mat?.material_name,degradation:mat?.degradation_pct},
+        reasoning:[{step:1,action:`Material "${mat?.material_name}" removed from tracking`,result:`Operator removed ${mat?.material_name} (${mat?.degradation_pct}% degradation). ${(f||[]).length} materials remain tracked. Review if related inspections or maintenance tasks should be updated.`}],
+        recommendations:[],cross_module_impacts:[{module:'materials',impact:`${mat?.material_name} no longer tracked. Verify no dependent maintenance or safety actions reference this material.`}],
+        trend_analysis:`Cross-module update: Material removed from monitoring.`,
+        full_response:event,user_id:userId},token).catch(()=>{});
+    }
+    setDeleting(null);
+  };
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);
   useEffect(()=>{if(!token)return;
     loadLastAiLog('materials',token).then(log=>{
       if(log?.full_response){const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setAiRecs(parseRecs(ai.recommendations));
         _lastAiResponse['materials']=ai;}
     });
     dbGet('nuclear_materials',token,'order=material_name.asc').then(d=>{if(d?.length){setMats(d);setSel(d[0].id)}});},[token]);
   const[matWarning,setMatWarning]=useState(null);
-  const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;setSaving(true);setAiActive(true);setMatWarning(null);
+
+  const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;
+    // Duplicate check — case-insensitive
+    const exists=mats.find(m=>m.material_name.toLowerCase().trim()===newName.toLowerCase().trim());
+    if(exists){
+      setMatWarning(`"${newName}" is already being tracked at ${(+exists.degradation_pct).toFixed(1)}% degradation. To update, delete the existing entry first or add a different material.`);
+      return;
+    }
+    setSaving(true);setAiActive(true);setMatWarning(null);
     const deg=parseFloat(newDeg);
     const ai=await geminiAnalyze('materials',{material_name:newName,degradation_pct:deg},mats,token,userId);
     let st,remLife,corrRate;
     if(ai){
       // Check if AI flagged the material as invalid
       if(ai.material_valid===false){
-        setMatWarning(`"${newName}" is not a recognized nuclear-grade material. ${(ai.recommendations||[]).map(r=>safeText(r.desc||r.description)).join(' ')}`);
+        setMatWarning(`"${newName}" is not a recognized nuclear-grade material. ${parseRecs(ai.recommendations).map(r=>r.desc).join(' ')}`);
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-        setAiRecs((ai.recommendations||[]).map(r=>({title:safeText(r.title),desc:safeText(r.desc||r.description),sev:r.severity||'warning'})));
+        setAiRecs(parseRecs(ai.recommendations));
         setAiActive(false);setSaving(false);return;
       }
       st=ai.alert_level==='SAFE'?'safe':ai.alert_level==='MONITOR'?'monitor':'warning';
       remLife=ai.remaining_life_months||Math.round((100-deg)/1.5);
       corrRate=ai.corrosion_rate||Math.round(deg*.3*100)/100;
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setAiRecs(parseRecs(ai.recommendations));
     } else {
       st=deg>15?'warning':deg>10?'monitor':'safe';
       remLife=Math.round((100-deg)/1.5);corrRate=Math.round(deg*.3*100)/100;
@@ -778,8 +820,8 @@ function MaterialsPage({token,userId}){
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:14,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{mats.map(m=>(<div key={m.id} style={{display:'flex',justifyContent:'space-between',fontSize:'11px',padding:'3px 0'}}><span style={{color:C.dim}}>{m.material_name}</span><span style={{fontFamily:'monospace',color:(+m.degradation_pct)>12?C.orange:C.green,fontWeight:600}}>{(+m.degradation_pct).toFixed(1)}%</span></div>))}</div>
         </Card>
         {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
-        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
-        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action||r.title||r.analysis||r.finding||r.check||'')}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result||r.outcome||r.detail||r.description||r.conclusion||r.assessment||'')}</div></div></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact||c.description||c.detail||c.text||c.assessment||'')}</span></div>))}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         {matWarning&&<div style={{background:C.orangeDim,border:`1px solid ${C.orange}25`,borderRadius:10,padding:'12px 16px',marginBottom:12,animation:'fadeUp .3s'}}><div style={{display:'flex',gap:8,alignItems:'flex-start'}}><span style={{fontSize:'16px',flexShrink:0}}>{'\u26A0'}</span><div><div style={{fontSize:'12px',fontWeight:600,color:C.orange,marginBottom:4}}>Material Not Recognized</div><div style={{fontSize:'11px',color:C.dim,lineHeight:1.4}}>{matWarning}</div></div></div></div>}
@@ -792,7 +834,7 @@ function MaterialsPage({token,userId}){
           <div style={{fontSize:'24px',fontFamily:'monospace',fontWeight:700,color:(+selMat.degradation_pct)>12?C.orange:C.red,marginBottom:8}}>{(+selMat.degradation_pct).toFixed(1)}%</div>
           {[['Status',selMat.status?.toUpperCase()],['Remaining Life',selMat.remaining_life_months+' months'],['Corrosion Rate',selMat.corrosion_rate],['Last Inspection',selMat.last_inspection]].map(([l,v])=><div key={l} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',fontSize:'11px'}}><span style={{color:C.muted}}>{l}</span><span style={{fontFamily:'monospace',color:C.text}}>{v||'-'}</span></div>)}
         </Card>}
-        {mats.length>0&&<Card title="Select Material" delay={.2}>{mats.map(m=><div key={m.id} onClick={()=>setSel(m.id)} style={{display:'flex',justifyContent:'space-between',padding:'6px 8px',borderRadius:6,cursor:'pointer',background:sel===m.id?C.redDim:'transparent',marginBottom:2,transition:'all .2s'}}><span style={{fontSize:'11px',color:sel===m.id?C.red:C.dim}}>{m.material_name}</span><span style={{fontSize:'10px',fontFamily:'monospace',color:(+m.degradation_pct)>12?C.orange:C.green}}>{(+m.degradation_pct).toFixed(1)}%</span></div>)}</Card>}
+        {mats.length>0&&<Card title="Select Material" delay={.2}>{mats.map(m=><div key={m.id} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 8px',borderRadius:6,background:sel===m.id?C.redDim:'transparent',marginBottom:2,transition:'all .2s'}}><div onClick={()=>setSel(m.id)} style={{flex:1,display:'flex',justifyContent:'space-between',cursor:'pointer'}}><span style={{fontSize:'11px',color:sel===m.id?C.red:C.dim}}>{m.material_name}</span><span style={{fontSize:'10px',fontFamily:'monospace',color:(+m.degradation_pct)>12?C.orange:C.green}}>{(+m.degradation_pct).toFixed(1)}%</span></div><button onClick={e=>{e.stopPropagation();if(confirm(`Delete ${m.material_name}?`))deleteMat(m.id)}} disabled={deleting===m.id} style={{background:'transparent',border:'none',color:C.muted,fontSize:'10px',cursor:'pointer',padding:'2px 4px',borderRadius:4,opacity:deleting===m.id?.3:1}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>{deleting===m.id?'...':'\u2715'}</button></div>)}</Card>}
       </div>
     </div>
   </div>);
@@ -809,7 +851,7 @@ function OperationsPage({token,userId}){
     loadLastAiLog('operations',token).then(log=>{
       if(log?.full_response){const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setAiRecs(parseRecs(ai.recommendations));
         setSchedInsights(safeText(ai.scheduling_insights));setPlantAvail(ai.plant_availability_pct||null);
         _lastAiResponse['operations']=ai;}
     });
@@ -821,11 +863,32 @@ function OperationsPage({token,userId}){
     const ai=await geminiAnalyze('operations',{new_task:{name:newTask,date:newDate,priority:newPri,hours:newHrs},all_tasks:f||tasks},f||tasks,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setAiRecs(parseRecs(ai.recommendations));
       setSchedInsights(safeText(ai.scheduling_insights));setPlantAvail(ai.plant_availability_pct||null);
     } else { setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setSchedInsights('');setPlantAvail(null); }
     setAiActive(false);setNewTask('');setNewDate('');setSaving(false);};
   const complete=async(id)=>{await dbPatch('nuclear_maintenance',id,{status:'completed',completed_at:new Date().toISOString()},token);const f=await dbGet('nuclear_maintenance',token,'order=scheduled_date.asc');if(f)setTasks(f);};
+  const deleteTask=async(id)=>{
+    const task=tasks.find(t=>t.id===id);
+    await dbDelete('nuclear_maintenance',id,token);
+    const f=await dbGet('nuclear_maintenance',token,'order=scheduled_date.asc');if(f)setTasks(f);else setTasks([]);
+    // Notify cross-module brain
+    const event={alert_level:task?.priority==='CRITICAL'?'WARNING':'INFO',confidence:100,
+      recommendations:[{title:`Task "${task?.task_name||'Task'}" deleted`,severity:task?.priority==='CRITICAL'?'warning':'info'}],
+      trend_analysis:`Maintenance task "${task?.task_name}" (${task?.priority} priority) removed. ${(f||[]).length} tasks remain scheduled.${task?.priority==='CRITICAL'?' WARNING: Deleted task was CRITICAL priority — verify no safety-critical maintenance is being skipped.':''}`};
+    _lastAiResponse['operations']=event;
+    try{sessionStorage.setItem('llyana_ai_prev_operations',JSON.stringify(event))}catch{}
+    // Log to affected modules
+    const modules=['reactor','thermal','materials','safety','energy'];
+    for(const mod of modules){
+      dbPost('ai_analysis_log',{module:mod,alert_level:task?.priority==='CRITICAL'?'WARNING':'INFO',confidence:100,
+        input_params:{action:'task_deleted',task:task?.task_name,priority:task?.priority},
+        reasoning:[{step:1,action:`Maintenance task "${task?.task_name}" deleted`,result:`Operator removed ${task?.priority} priority task "${task?.task_name}". ${(f||[]).length} tasks remain.${task?.priority==='CRITICAL'?' This was a CRITICAL task — all modules should verify no dependent safety actions are affected.':''}`}],
+        recommendations:[],cross_module_impacts:[{module:'operations',impact:`${task?.task_name} removed from schedule.${task?.priority==='CRITICAL'?' CRITICAL task deletion — verify safety compliance.':''}`}],
+        trend_analysis:`Cross-module update: Maintenance task deleted.`,
+        full_response:event,user_id:userId},token).catch(()=>{});
+    }
+  };
   const active=tasks.filter(t=>t.status!=='completed'&&t.status!=='cancelled');
   const completed=tasks.filter(t=>t.status==='completed');
   const filtered=filter==='All'?active:active.filter(t=>t.priority===filter.toUpperCase());
@@ -839,13 +902,13 @@ function OperationsPage({token,userId}){
         <Card title="Maintenance Timeline" delay={.1} actions={<div style={{display:'flex',gap:6}}>{['All','Critical','High','Medium'].map(f=><Pill key={f} active={filter===f} onClick={()=>setFilter(f)}>{f}</Pill>)}</div>}>
           {filtered.length?filtered.map((t,i)=>(<div key={t.id} onMouseEnter={()=>setHov(t.id)} onMouseLeave={()=>setHov(null)} style={{background:hov===t.id?C.bgCardHover:C.bg,border:`1px solid ${hov===t.id?(priC[t.priority]||C.cyan)+'30':C.border}`,borderRadius:10,padding:'14px 16px',marginBottom:8,borderLeft:`3px solid ${priC[t.priority]||C.cyan}`,animation:`slideIn .3s ease-out ${i*.05}s both`,transition:'all .25s',cursor:'pointer',transform:hov===t.id?'translateX(4px)':'none'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:'13px',fontWeight:500}}>{t.task_name}</div><div style={{fontSize:'10px',color:C.muted,marginTop:2}}>{t.scheduled_date} {'\u00B7'} {t.duration_hours}h{t.assigned_team?` ${'\u00B7'} ${t.assigned_team}`:''}</div></div>
-            <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{background:(priC[t.priority]||C.cyan)+'18',color:priC[t.priority]||C.cyan,fontSize:'9px',fontWeight:700,padding:'3px 8px',borderRadius:4}}>{t.priority}</span><button onClick={e=>{e.stopPropagation();complete(t.id)}} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'9px',padding:'2px 6px',cursor:'pointer'}}>{'\u2713'}</button></div></div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{background:(priC[t.priority]||C.cyan)+'18',color:priC[t.priority]||C.cyan,fontSize:'9px',fontWeight:700,padding:'3px 8px',borderRadius:4}}>{t.priority}</span><button onClick={e=>{e.stopPropagation();complete(t.id)}} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'9px',padding:'2px 6px',cursor:'pointer'}}>{'\u2713'}</button><button onClick={e=>{e.stopPropagation();if(confirm(`Delete "${t.task_name}"?`))deleteTask(t.id)}} style={{background:'transparent',border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,fontSize:'9px',padding:'2px 6px',cursor:'pointer'}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>{'\u2715'}</button></div></div>
           </div>)):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No tasks. Add one.</div>}
         </Card>
         {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
-        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action||r.title||r.analysis||r.finding||r.check||'')}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result||r.outcome||r.detail||r.description||r.conclusion||r.assessment||'')}</div></div></div>))}</div></Card>}
         {schedInsights&&<Card title="Scheduling Insights" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{schedInsights}</div></Card>}
-        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.35}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.35}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact||c.description||c.detail||c.text||c.assessment||'')}</span></div>))}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Add Task" delay={.15}>
@@ -872,7 +935,7 @@ function SafetyPage({token,userId}){
     loadLastAiLog('safety',token).then(log=>{
       if(log?.full_response){const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-        setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setAiRecs(parseRecs(ai.recommendations));
         setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
         _lastAiResponse['safety']=ai;}
     });
@@ -905,7 +968,7 @@ function SafetyPage({token,userId}){
     // Update AI display
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setAiRecs(parseRecs(ai.recommendations));
       setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
     }
     const approved=ai?.alert_level==='SAFE'||ai?.alert_level==='MONITOR';
@@ -940,7 +1003,7 @@ function SafetyPage({token,userId}){
     const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:freshComp||comp,new_standard:{name:newStd,code:newCode}},alerts,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setAiRecs(parseRecs(ai.recommendations));
       setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
     } else { setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setTrendInfo('');setSafetyPosture('');setRegGaps([]); }
     setAiActive(false);setNewStd('');setNewCode('');setSaving(false);};
@@ -948,7 +1011,7 @@ function SafetyPage({token,userId}){
     const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:comp},alerts,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-      setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setAiRecs(parseRecs(ai.recommendations));
       setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
     }
     setAiActive(false);};
@@ -985,10 +1048,10 @@ function SafetyPage({token,userId}){
         </Card>
         {safetyPosture&&<Card title="Safety Posture Assessment" delay={.15}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safetyPosture}</div></Card>}
         {aiRecs.length>0&&<Card title="AI Safety Recommendations" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
-        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action||r.title||r.analysis||r.finding||r.check||'')}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result||r.outcome||r.detail||r.description||r.conclusion||r.assessment||'')}</div></div></div>))}</div></Card>}
         {regGaps.length>0&&<Card title="Regulatory Gaps" delay={.3}><div>{regGaps.map((g,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.red+'08',borderRadius:8,border:`1px solid ${C.red}15`}}><span style={{color:C.red,fontSize:'12px'}}>{'\u26A0'}</span><span style={{fontSize:'11px',color:C.dim}}>{g}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Alert Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
-        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.4}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.4}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact||c.description||c.detail||c.text||c.assessment||'')}</span></div>))}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Run Safety Audit" delay={.12}>
@@ -1021,7 +1084,7 @@ function EnergyPage({token,userId}){
       if(log?.full_response){const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);
         setTrendInfo(safeText(ai.trend_analysis));setDeployInsights(safeText(ai.deployment_insights));
-        setCrossImpacts(ai.cross_module_impacts||[]);setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+        setCrossImpacts(ai.cross_module_impacts||[]);setAiRecs(parseRecs(ai.recommendations));
         _lastAiResponse['energy']=ai;}
     });
     dbGet('nuclear_egm_data',token,'order=created_at.desc&limit=12').then(d=>{if(d?.length)setReadings(d)});},[token]);
@@ -1031,7 +1094,7 @@ function EnergyPage({token,userId}){
     if(ai){
       raw=+(ai.raw_power_w||(f*a*3.5*.01));net=+(ai.net_power_w||(raw*.88));daily=+(ai.daily_kwh||(net*16/1000));monthly=+(ai.monthly_kwh||(daily*30));eff=+(ai.efficiency_pct||3.08);
       setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setTrendInfo(safeText(ai.trend_analysis));setDeployInsights(safeText(ai.deployment_insights));
-      setCrossImpacts(ai.cross_module_impacts||[]);setAiRecs((ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'})));
+      setCrossImpacts(ai.cross_module_impacts||[]);setAiRecs(parseRecs(ai.recommendations));
     } else {
       raw=f*a*3.5*.01;net=raw*(1-.12);daily=net*16/1000;monthly=daily*30;eff=3.5*(1-.12)*(1-(Math.random()*.02));
       setConfidence(null);setReasoning([]);setTrendInfo('');setDeployInsights('');setCrossImpacts([]);setAiRecs([]);
@@ -1050,10 +1113,10 @@ function EnergyPage({token,userId}){
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Yield History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.monthly_kwh||0).reverse()} color={C.red} showArea label="Monthly kWh"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency_pct||0).reverse()} color={C.green} label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
-        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
+        {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action||r.title||r.analysis||r.finding||r.check||'')}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result||r.outcome||r.detail||r.description||r.conclusion||r.assessment||'')}</div></div></div>))}</div></Card>}
         {trendInfo&&<Card title="Traffic & Yield Trends" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
         {aiRecs.length>0&&<Card title="AI Insights" delay={.27}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
-        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.32}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
+        {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.32}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact||c.description||c.detail||c.text||c.assessment||'')}</span></div>))}</div></Card>}
         {deployInsights&&<Card title="Deployment Insights" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{deployInsights}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
