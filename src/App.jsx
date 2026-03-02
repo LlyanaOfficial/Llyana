@@ -654,7 +654,19 @@ function BrChart({data,labels,w=700,h=200,color=C.red,unit='%'}){
     </div>}
   </div>)}
 
-function Gauge({value,label,size=120}){const a=(value/100)*270-135,r=size/2-14,cx=size/2,cy=size/2+6;const sA=-135*Math.PI/180,eA=a*Math.PI/180,bgE=135*Math.PI/180;const arc=(s,e)=>{const x1=cx+r*Math.cos(s),y1=cy+r*Math.sin(s),x2=cx+r*Math.cos(e),y2=cy+r*Math.sin(e);return`M${x1} ${y1}A${r} ${r} 0 ${e-s>Math.PI?1:0} 1 ${x2} ${y2}`};const gc=value>95?C.green:value>85?C.yellow:value>70?C.orange:C.red;return(<div style={{display:'flex',flexDirection:'column',alignItems:'center',minHeight:size+30}}><svg width={size} height={size*.75} viewBox={`0 0 ${size} ${size}`} style={{overflow:'visible'}}><path d={arc(sA,bgE)} fill="none" stroke={C.veryMuted} strokeWidth="6" strokeLinecap="round"/><path d={arc(sA,eA)} fill="none" stroke={gc} strokeWidth="6" strokeLinecap="round" style={{filter:`drop-shadow(0 0 8px ${gc}50)`}}/><text x={cx} y={cy+8} textAnchor="middle" fill={gc} fontSize="22" fontWeight="700" fontFamily="'JetBrains Mono',monospace">{Math.round(value)}%</text></svg><div style={{fontSize:'11px',color:C.dim,marginTop:4}}>{label}</div></div>)}
+function Gauge({value,label,size=120,unit='%',min=0,max=100}){
+  // fillPct drives the arc: 0-100 range
+  const fillPct=unit==='%'?Math.min(100,Math.max(0,value)):Math.min(100,Math.max(0,((value-min)/(max-min))*100));
+  const a=(fillPct/100)*270-135,r=size/2-14,cx=size/2,cy=size/2+6;
+  const sA=-135*Math.PI/180,eA=a*Math.PI/180,bgE=135*Math.PI/180;
+  const arc=(s,e)=>{const x1=cx+r*Math.cos(s),y1=cy+r*Math.sin(s),x2=cx+r*Math.cos(e),y2=cy+r*Math.sin(e);return`M${x1} ${y1}A${r} ${r} 0 ${e-s>Math.PI?1:0} 1 ${x2} ${y2}`};
+  // Color based on fill percentage for efficiency, or inverted for temp/pressure (high = bad)
+  const inv=unit==='°C'||unit===' bar';
+  const gc=inv?(fillPct<60?C.green:fillPct<80?C.yellow:fillPct<90?C.orange:C.red):(fillPct>95?C.green:fillPct>85?C.yellow:fillPct>70?C.orange:C.red);
+  const displayVal=unit==='%'?Math.round(value)+'%':Math.round(value)+unit;
+  const fontSize=displayVal.length>5?16:displayVal.length>4?18:22;
+  return(<div style={{display:'flex',flexDirection:'column',alignItems:'center',minHeight:size+30}}><svg width={size} height={size*.75} viewBox={`0 0 ${size} ${size}`} style={{overflow:'visible'}}><path d={arc(sA,bgE)} fill="none" stroke={C.veryMuted} strokeWidth="6" strokeLinecap="round"/><path d={arc(sA,eA)} fill="none" stroke={gc} strokeWidth="6" strokeLinecap="round" style={{filter:`drop-shadow(0 0 8px ${gc}50)`}}/><text x={cx} y={cy+8} textAnchor="middle" fill={gc} fontSize={fontSize} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{displayVal}</text></svg><div style={{fontSize:'11px',color:C.dim,marginTop:4}}>{label}</div></div>)
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SYSTEM STATUS CONTEXT — shared realtime state
@@ -840,7 +852,8 @@ function ReactorPage({token,userId}){
         const recs=parseRecs(ai.recommendations);
         if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
         const eff=+(ai.efficiency||95),tPct=+(ai.temperature_pct||90),pPct=+(ai.pressure_pct||88);
-        setRes({eff,tPct,pPct,recs,overall:ai.alert_level||'SAFE'});setAk(1);
+        const actualTemp=log.input_params?.core_temp||0,actualPres=log.input_params?.pressure||0;
+        setRes({eff,tPct,pPct,recs,overall:ai.alert_level||'SAFE',actualTemp,actualPres});setAk(1);
         setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
         setTrendInfo(safeText(ai.trend_analysis));setBenchInfo(ai.benchmarks||null);
         _lastAiResponse['reactor']=ai;
@@ -862,7 +875,8 @@ function ReactorPage({token,userId}){
     const t=parseFloat(ct),p=parseFloat(pr),f=parseFloat(fr);if(isNaN(t)||isNaN(p)||isNaN(f))return;
     setSaving(true);setAiActive(true);
     const ai=await geminiAnalyze('reactor',{core_temp:t,pressure:p,flow_rate:f},history,token,userId);
-    let eff,tPct,pPct,recs,overall,nFlux,cRod,xenon;
+    let eff,tPct,pPct,recs,overall,nFlux,cRod,xenon,actualTemp,actualPres;
+    actualTemp=t;actualPres=p;
     if(ai){
       eff=+(ai.efficiency||95);tPct=+(ai.temperature_pct||90);pPct=+(ai.pressure_pct||88);overall=ai.alert_level||'SAFE';
       recs=parseRecs(ai.recommendations);
@@ -874,7 +888,7 @@ function ReactorPage({token,userId}){
       const fb=fallback(t,p,f);eff=fb.eff;tPct=fb.tPct;pPct=fb.pPct;recs=fb.recs;overall=fb.overall;nFlux=fb.nFlux;cRod=fb.cRod;xenon=fb.xenon;
       setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');setBenchInfo(null);
     }
-    setRes({eff,tPct,pPct,recs,overall});setAk(k=>k+1);setAiActive(false);
+    setRes({eff,tPct,pPct,recs,overall,actualTemp,actualPres});setAk(k=>k+1);setAiActive(false);
     // Persist AI insights
     if(token){
       const row={core_temp:t,pressure:p,flow_rate:f,efficiency:eff,alert_level:overall,neutron_flux:String(nFlux),control_rod_position:typeof cRod==='number'?cRod:parseInt(cRod),xenon_level:typeof xenon==='number'?xenon:parseFloat(xenon),user_id:userId};
@@ -895,7 +909,7 @@ function ReactorPage({token,userId}){
     {!res&&!history.length&&<div style={{background:C.cyanDim,border:`1px solid ${C.cyan}25`,borderRadius:10,padding:'12px 16px',marginBottom:16,fontSize:'12px',color:C.cyan}}>No readings yet. Enter parameters and run analysis to get started.</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <Card title="Core Performance" delay={.1}>{res?<div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={Math.round(res.eff)} label="Efficiency"/><Gauge value={Math.round(res.tPct)} label="Temperature"/><Gauge value={Math.round(res.pPct)} label="Pressure"/></div>:<div style={{padding:30,textAlign:'center',color:C.muted,fontSize:'12px'}}>Run analysis to see gauges</div>}
+        <Card title="Core Performance" delay={.1}>{res?<div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={Math.round(res.eff)} label="Efficiency" unit="%" /><Gauge value={Math.round(res.actualTemp||0)} label="Temperature" unit="°C" min={280} max={600} /><Gauge value={Math.round(res.actualPres||0)} label="Pressure" unit=" bar" min={100} max={180} /></div>:<div style={{padding:30,textAlign:'center',color:C.muted,fontSize:'12px'}}>Run analysis to see gauges</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,borderTop:`1px solid ${C.border}`,paddingTop:16}}>{[['Neutron Flux',nf,'n/cm\u00B2s'],['Control Rod',cr,'Position'],['Xenon',xl,'Level']].map(([l,v,u])=>(<div key={l} className="card-hover" style={{background:C.bg,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`}}><div style={{fontSize:'9px',color:C.muted,textTransform:'uppercase'}}>{l}</div><div style={{fontFamily:'monospace',fontSize:'16px',fontWeight:700,margin:'4px 0 2px'}}>{v}</div><div style={{fontSize:'8px',color:C.muted}}>{u}</div></div>))}</div>
         </Card>
         {res&&<Card title="AI Insights" delay={.2}><div key={ak}>{res.recs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
