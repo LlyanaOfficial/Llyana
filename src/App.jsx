@@ -497,9 +497,65 @@ function Inp({label,value,onChange,hint,required,min,max,unit,type='number'}){
   useEffect(()=>{if(!value)sT(false)},[value]);
   return(<div style={{marginBottom:18}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><label style={{fontSize:'12px',color:C.dim,fontWeight:500}}>{label} {required&&<span style={{color:C.red}}>*</span>}</label>{al&&al!=='SAFE'&&<span style={{fontSize:'9px',fontWeight:700,color:AC[al],background:AC[al]+'15',padding:'2px 8px',borderRadius:4}}>{al}</span>}</div><div style={{position:'relative'}}><input type="text" value={value} onChange={x=>{onChange(x.target.value);if(!t)sT(true)}} onFocus={()=>sF(true)} onBlur={()=>{sF(false);sT(true)}} className={`input-focus ${e&&t?'shake':''}`} style={{width:'100%',background:C.bgInput,border:`1.5px solid ${bc}`,borderRadius:8,padding:unit?'11px 50px 11px 14px':'11px 14px',color:C.text,fontSize:'14px',fontFamily:"'JetBrains Mono',monospace",outline:'none',boxSizing:'border-box',transition:'border-color .2s'}}/>{unit&&<span style={{position:'absolute',right:14,top:'50%',transform:'translateY(-50%)',fontSize:'11px',color:C.muted,fontFamily:'monospace'}}>{unit}</span>}</div>{e&&t?<div style={{fontSize:'10px',color:C.red,marginTop:5,animation:'fadeIn .2s'}}>{e}</div>:hint?<div style={{fontSize:'10px',color:C.muted,marginTop:4}}>{hint}</div>:null}</div>)}
 
-function LnChart({data,w=800,h=180,color=C.red,showArea,label}){if(!data?.length)return null;const pad=20;const ih=h-pad*2;const mx=Math.max(...data),mn=Math.min(...data);const rng=mx-mn||1;const step=data.length>1?w/(data.length-1):w;const pts=data.map((v,i)=>`${i*step},${pad+ih-((v-mn)/rng)*ih}`).join(' ');return(<div style={{width:'100%',overflow:'hidden'}}><svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}} preserveAspectRatio="none">{showArea&&<><defs><linearGradient id={`ag${color.slice(1)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".15"/><stop offset="100%" stopColor={color} stopOpacity=".01"/></linearGradient></defs><polygon points={`0,${h} ${pts} ${(data.length-1)*step},${h}`} fill={`url(#ag${color.slice(1)})`}/></>}<polyline points={pts} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>{data.map((v,i)=>i%Math.max(1,Math.floor(data.length/8))===0&&<circle key={i} cx={i*step} cy={pad+ih-((v-mn)/rng)*ih} r="3" fill={color} style={{filter:`drop-shadow(0 0 4px ${color}60)`}}/>)}</svg>{label&&<div style={{textAlign:'center',fontSize:'10px',color:C.muted,marginTop:6}}>{label}</div>}</div>)}
+function LnChart({data,w=800,h=220,color=C.red,showArea,label,labels,unit=''}){
+  const[hov,setHov]=useState(null);
+  if(!data?.length)return null;
+  const pad={t:25,r:20,b:30,l:50};const iw=w-pad.l-pad.r;const ih=h-pad.t-pad.b;
+  const mx=Math.max(...data),mn=Math.min(...data);const rng=mx-mn||1;
+  const step=data.length>1?iw/(data.length-1):iw;
+  const getX=i=>pad.l+i*step;const getY=v=>pad.t+ih-((v-mn)/rng)*ih;
+  const pts=data.map((v,i)=>`${getX(i)},${getY(v)}`).join(' ');
+  // Y-axis ticks
+  const yTicks=5;const ySteps=Array.from({length:yTicks},(_,i)=>mn+(rng/(yTicks-1))*i);
+  return(<div style={{width:'100%',position:'relative'}}>
+    <svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}} onMouseLeave={()=>setHov(null)}>
+      {/* Grid lines + Y labels */}
+      {ySteps.map((v,i)=>{const y=getY(v);return(<g key={i}><line x1={pad.l} y1={y} x2={w-pad.r} y2={y} stroke={C.border} strokeWidth=".5" strokeDasharray="4,4"/><text x={pad.l-8} y={y+3} textAnchor="end" fill={C.muted} fontSize="9" fontFamily="'JetBrains Mono',monospace">{v>=1000?(v/1000).toFixed(1)+'k':v.toFixed(v<10?1:0)}</text></g>)})}
+      {/* X labels */}
+      {data.map((v,i)=>{if(data.length>8&&i%Math.ceil(data.length/6)!==0&&i!==data.length-1)return null;return(<text key={i} x={getX(i)} y={h-6} textAnchor="middle" fill={C.muted} fontSize="8">{labels?.[i]||`#${i+1}`}</text>)})}
+      {/* Area fill */}
+      {showArea&&<><defs><linearGradient id={`ag${color.slice(1)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".12"/><stop offset="100%" stopColor={color} stopOpacity=".01"/></linearGradient></defs><polygon points={`${getX(0)},${pad.t+ih} ${pts} ${getX(data.length-1)},${pad.t+ih}`} fill={`url(#ag${color.slice(1)})`}/></>}
+      {/* Line */}
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>
+      {/* Data points — all visible */}
+      {data.map((v,i)=><circle key={i} cx={getX(i)} cy={getY(v)} r={hov===i?6:3.5} fill={hov===i?color:C.bg} stroke={color} strokeWidth="2" style={{cursor:'pointer',transition:'r .15s',filter:hov===i?`drop-shadow(0 0 8px ${color}80)`:''}} onMouseEnter={()=>setHov(i)}/>)}
+      {/* Hover crosshair */}
+      {hov!==null&&<line x1={getX(hov)} y1={pad.t} x2={getX(hov)} y2={pad.t+ih} stroke={color} strokeWidth="1" strokeDasharray="3,3" opacity=".4"/>}
+    </svg>
+    {/* Tooltip */}
+    {hov!==null&&<div style={{position:'absolute',left:`${(getX(hov)/w)*100}%`,top:0,transform:'translateX(-50%)',background:C.bgCard,border:`1px solid ${color}30`,borderRadius:8,padding:'8px 12px',pointerEvents:'none',zIndex:10,boxShadow:`0 4px 12px ${C.bg}80`,minWidth:100}}>
+      <div style={{fontSize:'14px',fontWeight:700,color,fontFamily:"'JetBrains Mono',monospace"}}>{data[hov]?.toFixed?.(1)}{unit}</div>
+      <div style={{fontSize:'10px',color:C.dim,marginTop:2}}>{labels?.[hov]||`Reading #${hov+1}`}</div>
+      {hov>0&&<div style={{fontSize:'9px',color:data[hov]>data[hov-1]?C.green:data[hov]<data[hov-1]?C.red:C.muted,marginTop:3}}>{data[hov]>data[hov-1]?'\u25B2':data[hov]<data[hov-1]?'\u25BC':'\u25C6'} {((data[hov]-data[hov-1])/Math.abs(data[hov-1]||1)*100).toFixed(1)}% from prev</div>}
+    </div>}
+    {label&&<div style={{textAlign:'center',fontSize:'10px',color:C.muted,marginTop:4}}>{label}</div>}
+  </div>)}
 
-function BrChart({data,labels,w=700,h=180,color=C.red}){const mx=Math.max(...data)*1.2||1;const bw=w/data.length*.55,gap=w/data.length*.45;return(<div style={{width:'100%'}}><svg viewBox={`0 0 ${w} ${h+28}`} style={{width:'100%'}}><defs><linearGradient id="bg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color}/><stop offset="100%" stopColor={color} stopOpacity=".5"/></linearGradient></defs>{data.map((v,i)=>{const bh=(v/mx)*h,x=i*(bw+gap)+gap/2;return(<g key={i}><rect x={x} y={h-bh} width={bw} height={bh} fill="url(#bg1)" rx="4" style={{transformOrigin:`${x}px ${h}px`,animation:`barGrow .6s ease-out ${i*.08}s both`}}/>{labels?.[i]&&<text x={x+bw/2} y={h+16} textAnchor="middle" fill={C.muted} fontSize="8.5">{labels[i]}</text>}</g>)})}</svg></div>)}
+function BrChart({data,labels,w=700,h=200,color=C.red,unit='%'}){
+  const[hov,setHov]=useState(null);
+  if(!data?.length)return null;
+  const pad={t:15,r:10,b:30,l:10};const ih=h-pad.t-pad.b;
+  const mx=Math.max(...data)*1.2||1;const bw=w/data.length*.55,gap=w/data.length*.45;
+  return(<div style={{width:'100%',position:'relative'}}>
+    <svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}} onMouseLeave={()=>setHov(null)}>
+      <defs><linearGradient id="bg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color}/><stop offset="100%" stopColor={color} stopOpacity=".5"/></linearGradient>
+      <linearGradient id="bg1h" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="1"/><stop offset="100%" stopColor={color} stopOpacity=".8"/></linearGradient></defs>
+      {data.map((v,i)=>{const bh=Math.max(2,(v/mx)*ih);const x=pad.l+i*(bw+gap)+gap/2;const y=pad.t+ih-bh;
+        return(<g key={i} onMouseEnter={()=>setHov(i)} style={{cursor:'pointer'}}>
+          <rect x={x} y={y} width={bw} height={bh} fill={hov===i?"url(#bg1h)":"url(#bg1)"} rx="4" style={{transition:'all .15s',filter:hov===i?`drop-shadow(0 0 6px ${color}50)`:''}}/>
+          {/* Value on top of bar */}
+          <text x={x+bw/2} y={y-5} textAnchor="middle" fill={hov===i?color:C.muted} fontSize={hov===i?"10":"8"} fontWeight={hov===i?"700":"400"} fontFamily="'JetBrains Mono',monospace" style={{transition:'all .15s'}}>{v.toFixed(1)}{unit}</text>
+          {/* Label below */}
+          {labels?.[i]&&<text x={x+bw/2} y={pad.t+ih+16} textAnchor="middle" fill={hov===i?C.text:C.muted} fontSize={hov===i?"9":"8"} fontWeight={hov===i?"600":"400"}>{labels[i]}</text>}
+        </g>)})}
+    </svg>
+    {/* Tooltip */}
+    {hov!==null&&<div style={{position:'absolute',left:`${((pad.l+hov*(bw+gap)+gap/2+bw/2)/w)*100}%`,top:0,transform:'translateX(-50%)',background:C.bgCard,border:`1px solid ${color}30`,borderRadius:8,padding:'8px 12px',pointerEvents:'none',zIndex:10,boxShadow:`0 4px 12px ${C.bg}80`}}>
+      <div style={{fontSize:'14px',fontWeight:700,color,fontFamily:"'JetBrains Mono',monospace"}}>{data[hov]?.toFixed(1)}{unit}</div>
+      <div style={{fontSize:'10px',color:C.dim,marginTop:2}}>{labels?.[hov]||`Item #${hov+1}`}</div>
+      {data.length>1&&<div style={{fontSize:'9px',color:C.muted,marginTop:3}}>Avg: {(data.reduce((a,b)=>a+b,0)/data.length).toFixed(1)}{unit}</div>}
+    </div>}
+  </div>)}
 
 function Gauge({value,label,size=120}){const a=(value/100)*270-135,r=size/2-14,cx=size/2,cy=size/2+6;const sA=-135*Math.PI/180,eA=a*Math.PI/180,bgE=135*Math.PI/180;const arc=(s,e)=>{const x1=cx+r*Math.cos(s),y1=cy+r*Math.sin(s),x2=cx+r*Math.cos(e),y2=cy+r*Math.sin(e);return`M${x1} ${y1}A${r} ${r} 0 ${e-s>Math.PI?1:0} 1 ${x2} ${y2}`};const gc=value>95?C.green:value>85?C.yellow:value>70?C.orange:C.red;return(<div style={{display:'flex',flexDirection:'column',alignItems:'center',minHeight:size+30}}><svg width={size} height={size*.75} viewBox={`0 0 ${size} ${size}`} style={{overflow:'visible'}}><path d={arc(sA,bgE)} fill="none" stroke={C.veryMuted} strokeWidth="6" strokeLinecap="round"/><path d={arc(sA,eA)} fill="none" stroke={gc} strokeWidth="6" strokeLinecap="round" style={{filter:`drop-shadow(0 0 8px ${gc}50)`}}/><text x={cx} y={cy+8} textAnchor="middle" fill={gc} fontSize="22" fontWeight="700" fontFamily="'JetBrains Mono',monospace">{Math.round(value)}%</text></svg><div style={{fontSize:'11px',color:C.dim,marginTop:4}}>{label}</div></div>)}
 
@@ -758,7 +814,7 @@ function ReactorPage({token,userId}){
           }
           return(<div key={k} style={{fontSize:'11px',color:C.dim,marginBottom:4,padding:'4px 0'}}><span style={{fontWeight:600}}>{param}:</span> {safeText(v)}</div>)
         }):<div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safeText(benchInfo)}</div>}</div></Card>}
-        {history.length>1&&<Card title="Efficiency History" delay={.45}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Last readings"/></Card>}
+        {history.length>1&&<Card title="Efficiency History" delay={.45}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea unit="%" label="Efficiency History"/></Card>}
       </div>
       <Card title="Parameters" delay={.15}>
         <Inp label="Core Temperature" value={ct} onChange={setCt} unit={"°C"} required min={280} max={600} hint="Range: 280–600°C"/>
@@ -814,8 +870,8 @@ function ThermalPage({token,userId}){
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Output" value={last?Math.round(+last.current_output)+'':'-'} sub="MW" delay={.05}/><StatCard label="Efficiency" value={last?(+last.efficiency).toFixed(1)+'%':'-'} accent={C.green} delay={.1}/><StatCard label="Thermal Load" value={last?Math.round(+last.thermal_load)+'':'-'} sub="MWh" delay={.15}/><StatCard label="Heat Rate" value={last?Math.round(+last.heat_rate)+'':'-'} sub="BTU/kWh" delay={.2}/>{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.25}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <Card title="Power Output History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.current_output||0).reverse()} color={C.red} showArea label={`Last ${readings.length} readings`}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
-        <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency||0).reverse()} color={C.green} showArea label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
+        <Card title="Power Output History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.current_output||0).reverse()} color={C.red} showArea unit=" MW" label={`Last ${readings.length} readings`}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
+        <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency||0).reverse()} color={C.green} showArea unit="%" label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
         {aiRecs.length>0&&<Card title="AI Insights" delay={.22}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
@@ -1232,8 +1288,8 @@ function EnergyPage({token,userId}){
     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}><StatCard label="Daily Yield" value={last?(+last.daily_kwh).toFixed(2)+'':'-'} sub="kWh" delay={.05}/><StatCard label="Monthly" value={last?(+last.monthly_kwh).toFixed(1)+'':'-'} sub="kWh" delay={.1}/><StatCard label="Net Power" value={last?(+last.net_power_w).toFixed(1)+'':'-'} sub="W" delay={.15}/><StatCard label="Annual Revenue" value={annualRev!=='-'?'$'+annualRev:'-'} sub="USD" accent={C.green} delay={.2}/>{confidence&&<StatCard label="AI Confidence" value={confidence+'%'} accent={C.cyan} delay={.25}/>}</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:16}}>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <Card title="Yield History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.monthly_kwh||0).reverse()} color={C.red} showArea label="Monthly kWh"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
-        <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency_pct||0).reverse()} color={C.green} label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
+        <Card title="Yield History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.monthly_kwh||0).reverse()} color={C.red} showArea unit=" kWh" label="Monthly kWh"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
+        <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency_pct||0).reverse()} color={C.green} unit="%" label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {trendInfo&&<Card title="Traffic & Yield Trends" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
         {aiRecs.length>0&&<Card title="AI Insights" delay={.27}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
