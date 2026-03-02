@@ -33,11 +33,12 @@ const SB_KEY=_k.join('.');
 async function db(method,table,token,body,qs=''){
   try{
     const h={apikey:SB_KEY,Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
-    if(method==='POST')h['Prefer']='return=representation';
+    if(method==='POST'||method==='PATCH')h['Prefer']='return=representation';
     const r=await fetch(`${SB_URL}/rest/v1/${table}${qs?'?'+qs:''}`,{method,headers:h,...(body?{body:JSON.stringify(body)}:{})});
-    if(!r.ok)return method==='GET'?[]:null;
-    return r.json();
-  }catch{return method==='GET'?[]:null}
+    if(!r.ok){const err=await r.text().catch(()=>'');console.error(`Llyana DB ${method} ${table} failed:`,r.status,err);return method==='GET'?[]:null}
+    const txt=await r.text();if(!txt)return method==='GET'?[]:null;
+    return JSON.parse(txt);
+  }catch(e){console.error(`Llyana DB ${method} ${table} error:`,e);return method==='GET'?[]:null}
 }
 const dbGet=(t,tk,qs)=>db('GET',t,tk,null,qs);
 const dbPost=(t,d,tk)=>db('POST',t,tk,d);
@@ -347,6 +348,11 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
     console.log('Llyana: First rec:', JSON.stringify((parsed.recommendations||[])[0]));
     console.log('Llyana: First reasoning:', JSON.stringify((parsed.reasoning||[])[0]));
     incAiCount();
+    // Skip brain storage for rejected materials (material_valid=false)
+    if(parsed.material_valid===false){
+      console.log('Llyana: Material rejected, skipping brain save');
+      return parsed;
+    }
     // Store for continuity + cross-module brain
     _lastAiResponse[module] = parsed;
     try { sessionStorage.setItem('llyana_ai_prev_'+module, JSON.stringify(parsed)); } catch {}
