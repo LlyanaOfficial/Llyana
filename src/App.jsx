@@ -279,7 +279,6 @@ function trackRpm() {
   _rpmTimestamps.push(Date.now());
   if (_rpmCallback) _rpmCallback(getRpm());
   if (_rpmResetCallback) _rpmResetCallback(getRpmReset());
-  // Start countdown interval if not already running
   if (!_rpmInterval) {
     _rpmInterval = setInterval(() => {
       const r = getRpm();
@@ -289,21 +288,33 @@ function trackRpm() {
     }, 1000);
   }
 }
+// RPD counter — persists in BOTH sessionStorage AND localStorage so it survives refresh/tab close
 function getAiCount() {
   try {
-    const d = JSON.parse(sessionStorage.getItem('llyana_ai_usage') || '{}');
-    // Google resets RPD at midnight Pacific Time
     const ptDate = new Date().toLocaleDateString('en-CA', {timeZone:'America/Los_Angeles'});
+    // Check localStorage first (survives tab close), then sessionStorage
+    const raw = localStorage.getItem('llyana_ai_usage') || sessionStorage.getItem('llyana_ai_usage') || '{}';
+    const d = JSON.parse(raw);
     if (d.date !== ptDate) return { date: ptDate, count: 0 };
     return d;
   } catch { return { date: new Date().toLocaleDateString('en-CA', {timeZone:'America/Los_Angeles'}), count: 0 }; }
+}
 }
 function incAiCount() {
   const d = getAiCount();
   d.count++;
   try { sessionStorage.setItem('llyana_ai_usage', JSON.stringify(d)); } catch {}
+  try { localStorage.setItem('llyana_ai_usage', JSON.stringify(d)); } catch {}
   if (_aiCountCallback) _aiCountCallback(d.count);
   return d.count;
+}
+// When we get a 429 from Google AND our counter says we have requests left, sync to actual limit
+function syncToApiLimit() {
+  const d = getAiCount();
+  d.count = AI_DAILY_LIMIT; // Mark as exhausted since API rejected us
+  try { sessionStorage.setItem('llyana_ai_usage', JSON.stringify(d)); } catch {}
+  try { localStorage.setItem('llyana_ai_usage', JSON.stringify(d)); } catch {}
+  if (_aiCountCallback) _aiCountCallback(d.count);
 }
 let _aiCountCallback = null;
 
@@ -349,6 +360,12 @@ async function loadLastAiLog(module, token) {
 
 async function geminiAnalyze(module, params, history = [], token = null, userId = null) {
   if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_HERE') { console.warn('Llyana: No Gemini key'); return null; }
+  // Pre-check: don't even try if daily limit exhausted
+  if (getAiCount().count >= AI_DAILY_LIMIT) {
+    setGlobalAiStatus(`Daily limit reached (${AI_DAILY_LIMIT} RPD). Resets at midnight PT (10AM SAST). Upgrade billing for more.`);
+    setTimeout(()=>setGlobalAiStatus(null),8000);
+    return null;
+  }
   const histCtx = history.length ? `\nHISTORY (last ${Math.min(history.length,5)} readings, newest first):\n${JSON.stringify(history.slice(0,5))}` : '\nNo history yet.';
   const prevAi = _lastAiResponse[module] ? `\nYOUR PREVIOUS ANALYSIS FOR THIS MODULE (build upon it, note changes, compare trends):\n${JSON.stringify({alert_level:_lastAiResponse[module].alert_level,confidence:_lastAiResponse[module].confidence,efficiency:_lastAiResponse[module].efficiency,recommendations:(_lastAiResponse[module].recommendations||[]).map(r=>r.title),trend_analysis:_lastAiResponse[module].trend_analysis})}` : '';
   const brainCtx = buildBrainContext(module);
@@ -360,8 +377,17 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
       body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. KEEP YOUR RESPONSE COMPACT — max 5 reasoning steps, max 3 recommendations, max 3 cross-module impacts. JSON only, no trailing text.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:4000} })
     });
     if (r.status === 429) {
+      const errBody = await r.text().catch(()=>'');
+      const currentCount = getAiCount().count;
+      const isDaily = errBody.includes('RESOURCE_EXHAUSTED') || currentCount >= AI_DAILY_LIMIT;
+      if (isDaily || currentCount >= AI_DAILY_LIMIT) {
+        if (currentCount < AI_DAILY_LIMIT) syncToApiLimit();
+        setGlobalAiStatus(`Daily limit reached (${AI_DAILY_LIMIT} RPD). Resets at midnight PT (10AM SAST).`);
+        setTimeout(()=>setGlobalAiStatus(null),8000);
+        return null;
+      }
       const wait = retryNum === 0 ? 4 : retryNum === 1 ? 8 : 15;
-      setGlobalAiStatus(`Rate limit (15 req/min). Auto-retrying in ${wait}s... (Your daily tokens are fine)`);
+      setGlobalAiStatus(`Rate limit (${AI_RPM_LIMIT} req/min). Auto-retrying in ${wait}s...`);
       console.log(`Llyana: RPM rate limited, waiting ${wait}s (attempt ${retryNum+1})...`);
       await new Promise(x=>setTimeout(x,wait*1000));
       setGlobalAiStatus(null);
