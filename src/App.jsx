@@ -258,6 +258,21 @@ function CrossModuleAlertBanner({alert}) {
 
 // AI request counter (persists per day in sessionStorage)
 const AI_DAILY_LIMIT = 1000;
+const AI_RPM_LIMIT = 15;
+// Track request timestamps for RPM display
+let _rpmTimestamps = [];
+let _rpmCallback = null;
+function getRpm() {
+  const now = Date.now();
+  _rpmTimestamps = _rpmTimestamps.filter(t => now - t < 60000);
+  return _rpmTimestamps.length;
+}
+function trackRpm() {
+  _rpmTimestamps.push(Date.now());
+  if (_rpmCallback) _rpmCallback(getRpm());
+  // Auto-update RPM display as requests age out
+  setTimeout(() => { if (_rpmCallback) _rpmCallback(getRpm()); }, 60000);
+}
 function getAiCount() {
   try {
     const d = JSON.parse(sessionStorage.getItem('llyana_ai_usage') || '{}');
@@ -329,9 +344,9 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
       body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. KEEP YOUR RESPONSE COMPACT — max 5 reasoning steps, max 3 recommendations, max 3 cross-module impacts. JSON only, no trailing text.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:4000} })
     });
     if (r.status === 429) {
-      const wait = retryNum === 0 ? 5 : 10;
-      setGlobalAiStatus(`AI rate limit reached. Retrying in ${wait}s...`);
-      console.log(`Llyana: Rate limited, waiting ${wait}s...`);
+      const wait = retryNum === 0 ? 4 : retryNum === 1 ? 8 : 15;
+      setGlobalAiStatus(`Rate limit (15 req/min). Auto-retrying in ${wait}s... (Your daily tokens are fine)`);
+      console.log(`Llyana: RPM rate limited, waiting ${wait}s (attempt ${retryNum+1})...`);
       await new Promise(x=>setTimeout(x,wait*1000));
       setGlobalAiStatus(null);
       return 'RETRY';
@@ -348,6 +363,7 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
     console.log('Llyana: First rec:', JSON.stringify((parsed.recommendations||[])[0]));
     console.log('Llyana: First reasoning:', JSON.stringify((parsed.reasoning||[])[0]));
     incAiCount();
+    trackRpm();
     // Skip brain storage for rejected materials (material_valid=false)
     if(parsed.material_valid===false){
       console.log('Llyana: Material rejected, skipping brain save');
@@ -368,7 +384,8 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
   try {
     let res = await attempt(0);
     if (res === 'RETRY') res = await attempt(1);
-    if (res === 'RETRY') { setGlobalAiStatus('AI temporarily unavailable. Using local analysis.'); setTimeout(()=>setGlobalAiStatus(null),4000); return null; }
+    if (res === 'RETRY') res = await attempt(2);
+    if (res === 'RETRY') { setGlobalAiStatus('AI temporarily unavailable. Try again in a minute.'); setTimeout(()=>setGlobalAiStatus(null),5000); return null; }
     return res;
   } catch(e) { console.error('Llyana Gemini error:', e); return null; }
 }
@@ -660,7 +677,7 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════
 const NAV=[{id:'overview',label:'Overview',d:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'},{id:'reactor',label:'Reactor Core',d:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83'},{id:'thermal',label:'Thermal & Power',d:'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z'},{id:'materials',label:'Materials',d:'M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5'},{id:'operations',label:'Operations',d:'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'},{id:'safety',label:'Safety',d:'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'},{id:'energy',label:'Energy Yield',d:'M22 12h-4l-3 9L9 3l-3 9H2'}];
 
-function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount}){
+function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rpm}){
   const[time,setTime]=useState(new Date());
   const[resetTimer,setResetTimer]=useState('');
   useEffect(()=>{const t=setInterval(()=>{
@@ -686,6 +703,7 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount}){
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>Status: <span style={{color:sysStatus.color}}>{sysStatus.label}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>DB: <span style={{color:sysStatus.dbOk?C.green:C.red}}>{sysStatus.dbOk?'CONNECTED':'OFFLINE'}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<900?C.cyan:aiCount<980?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:1}}>RPM: <span style={{color:rpm<10?C.cyan:rpm<14?C.yellow:C.red}}>{rpm}/{AI_RPM_LIMIT}</span> <span style={{color:C.muted}}>this min</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.muted,marginTop:2}}>Resets: <span style={{color:C.dim}}>{resetTimer}</span></div>
         </div>
       </aside>
@@ -1366,11 +1384,12 @@ export default function App(){
   const[user,setUser]=useState(null);const[page,setPage]=useState('overview');const[loading,setLoading]=useState(true);
   const[aiStatus,setAiStatus]=useState(null);
   const[aiCount,setAiCount]=useState(getAiCount().count);
+  const[rpm,setRpm]=useState(0);
   const token=user?.token;const userId=user?.id;
   const sysStatus=useSystemStatus(token);
 
   // Wire up global AI status callback
-  useEffect(()=>{_aiStatusCallback=setAiStatus;_aiCountCallback=setAiCount;return()=>{_aiStatusCallback=null;_aiCountCallback=null}},[]);
+  useEffect(()=>{_aiStatusCallback=setAiStatus;_aiCountCallback=setAiCount;_rpmCallback=setRpm;return()=>{_aiStatusCallback=null;_aiCountCallback=null;_rpmCallback=null}},[]);
 
   // Preload ALL modules' last AI responses into cross-module brain
   useEffect(()=>{if(!token)return;
@@ -1404,5 +1423,5 @@ export default function App(){
     safety:<ModuleErrorBoundary><SafetyPage token={token} userId={userId}/></ModuleErrorBoundary>,
     energy:<ModuleErrorBoundary><EnergyPage token={token} userId={userId}/></ModuleErrorBoundary>,
   };
-  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus} aiCount={aiCount}>{pg[page]||pg.overview}</Layout>;
+  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus} aiCount={aiCount} rpm={rpm}>{pg[page]||pg.overview}</Layout>;
 }
