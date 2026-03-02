@@ -95,7 +95,22 @@ JSON: {"alert_level":"...","confidence":N,"current_output":N,"efficiency":N,"the
 
   materials: `MATERIAL INTEGRITY & DEGRADATION — CRITICAL STRUCTURAL SAFETY.
 
-FAILURE MODES (analyze ALL for each material):
+MATERIAL VALIDATION (MANDATORY FIRST STEP):
+Before any analysis, validate the material name. Known nuclear-grade materials include:
+- Zircaloy-2, Zircaloy-4 (fuel cladding)
+- Inconel-600, Inconel-625, Inconel-690 (steam generators, heat exchangers)
+- SS-304, SS-304L, SS-316, SS-316L, SS-316LN (reactor internals, piping)
+- SA-508 Grade 3, SA-533 Grade B (pressure vessel)
+- Alloy X-750 (springs, bolts)
+- Stellite 6 (valve seats, hard-facing)
+- Hafnium, Boron Carbide (B4C), Silver-Indium-Cadmium (Ag-In-Cd) (control rods)
+- Carbon Steel A106, A516 (piping, containment)
+- Alumina, Zirconia (ceramic insulators)
+- Copper alloys (condenser tubes)
+If the material is NOT a recognized nuclear/engineering material, set "material_valid": false and alert_level to "UNKNOWN". Include a recommendation: "Unrecognized material — verify material name. Did you mean [suggest closest match]?"
+If the material IS recognized, set "material_valid": true and proceed with full analysis.
+
+FAILURE MODES (analyze ALL for each validated material):
 - Irradiation embrittlement: Neutron fluence causes ductile-to-brittle transition temperature (DBTT) shift. 5% degradation ≈ 20°C DBTT shift. Above 15% degradation: pressure vessel may not survive pressurized thermal shock (PTS). Reference: NRC 10 CFR 50.61.
 - Stress corrosion cracking (SCC): Inconel-600 is notorious. At >10% degradation with primary water chemistry, SCC probability increases 4x. Reference: EPRI MRP-375.
 - Creep: Zircaloy at elevated temperature. Creep rate doubles per 50°C above 400°C. At current reactor temperature, calculate projected creep strain.
@@ -112,7 +127,7 @@ CRITICAL ANALYSIS REQUIREMENTS:
 Thresholds: Safe(<8%), Monitor(8-15%), Warning(15-25%), Critical(>25%).
 Embrittlement: Low(<5%), Moderate(5-10%), Elevated(10-20%), High(>20%).
 
-JSON: {"alert_level":"...","confidence":N,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":N,"corrosion_rate":N,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
+JSON: {"alert_level":"...","confidence":N,"material_valid":true|false,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":N,"corrosion_rate":N,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
 
   energy: `EGM (ENERGY-GENERATING MAT) — PIEZOELECTRIC YIELD ANALYSIS.
 
@@ -366,11 +381,17 @@ function Btn({children,onClick,outline,style:s,disabled}){return(<button classNa
 function Pill({active,children,onClick}){return(<button onClick={onClick} style={{background:active?C.cyan+'20':'transparent',color:active?C.cyan:C.muted,border:`1px solid ${active?C.cyan+'40':C.border}`,borderRadius:6,padding:'5px 14px',fontSize:'11px',fontWeight:500,cursor:'pointer',transition:'all .2s'}}>{children}</button>)}
 function PBar({value,color,label}){return(<div style={{marginBottom:14}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}><span style={{fontSize:'12px',color:C.dim}}>{label}</span><span style={{fontSize:'12px',fontFamily:'monospace',color:color||C.red,fontWeight:600}}>{value}%</span></div><div style={{height:5,background:C.veryMuted,borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${value}%`,background:`linear-gradient(90deg,${color||C.red},${color||C.red}cc)`,borderRadius:3,transition:'width .8s cubic-bezier(.4,0,.2,1)'}}/></div></div>)}
 
-function Inp({label,value,onChange,hint,required,min,max,unit}){
+function Inp({label,value,onChange,hint,required,min,max,unit,type='number'}){
   const[t,sT]=useState(false);const[f,sF]=useState(false);const n=parseFloat(value);
-  let e='';if(t&&required&&!value)e=`${label} is required`;else if(t&&value&&isNaN(n))e='Must be a number';else if(t&&value&&min!=null&&n<min)e=`Min: ${min}${unit?' '+unit:''}`;else if(t&&value&&max!=null&&n>max)e=`Max: ${max}${unit?' '+unit:''}`;
-  const al=!e&&t&&value&&!isNaN(n)&&min!=null&&max!=null?getAlertLevel(n,min,max):null;
+  let e='';
+  if(t&&required&&!value)e=`${label} is required`;
+  else if(type==='number'&&t&&value&&isNaN(n))e='Must be a number';
+  else if(type==='number'&&t&&value&&min!=null&&n<min)e=`Min: ${min}${unit?' '+unit:''}`;
+  else if(type==='number'&&t&&value&&max!=null&&n>max)e=`Max: ${max}${unit?' '+unit:''}`;
+  const al=type==='number'&&!e&&t&&value&&!isNaN(n)&&min!=null&&max!=null?getAlertLevel(n,min,max):null;
   const bc=e?C.red:f?C.red:al==='WARNING'?C.orange:al==='MONITOR'?C.yellow:C.borderLight;
+  // Reset touched when value is cleared externally (after submit)
+  useEffect(()=>{if(!value)sT(false)},[value]);
   return(<div style={{marginBottom:18}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><label style={{fontSize:'12px',color:C.dim,fontWeight:500}}>{label} {required&&<span style={{color:C.red}}>*</span>}</label>{al&&al!=='SAFE'&&<span style={{fontSize:'9px',fontWeight:700,color:AC[al],background:AC[al]+'15',padding:'2px 8px',borderRadius:4}}>{al}</span>}</div><div style={{position:'relative'}}><input type="text" value={value} onChange={x=>{onChange(x.target.value);if(!t)sT(true)}} onFocus={()=>sF(true)} onBlur={()=>{sF(false);sT(true)}} className={`input-focus ${e&&t?'shake':''}`} style={{width:'100%',background:C.bgInput,border:`1.5px solid ${bc}`,borderRadius:8,padding:unit?'11px 50px 11px 14px':'11px 14px',color:C.text,fontSize:'14px',fontFamily:"'JetBrains Mono',monospace",outline:'none',boxSizing:'border-box',transition:'border-color .2s'}}/>{unit&&<span style={{position:'absolute',right:14,top:'50%',transform:'translateY(-50%)',fontSize:'11px',color:C.muted,fontFamily:'monospace'}}>{unit}</span>}</div>{e&&t?<div style={{fontSize:'10px',color:C.red,marginTop:5,animation:'fadeIn .2s'}}>{e}</div>:hint?<div style={{fontSize:'10px',color:C.muted,marginTop:4}}>{hint}</div>:null}</div>)}
 
 function LnChart({data,w=800,h=180,color=C.red,showArea,label}){if(!data?.length)return null;const pad=20;const ih=h-pad*2;const mx=Math.max(...data),mn=Math.min(...data);const rng=mx-mn||1;const step=data.length>1?w/(data.length-1):w;const pts=data.map((v,i)=>`${i*step},${pad+ih-((v-mn)/rng)*ih}`).join(' ');return(<div style={{width:'100%',overflow:'hidden'}}><svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}} preserveAspectRatio="none">{showArea&&<><defs><linearGradient id={`ag${color.slice(1)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".15"/><stop offset="100%" stopColor={color} stopOpacity=".01"/></linearGradient></defs><polygon points={`0,${h} ${pts} ${(data.length-1)*step},${h}`} fill={`url(#ag${color.slice(1)})`}/></>}<polyline points={pts} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>{data.map((v,i)=>i%Math.max(1,Math.floor(data.length/8))===0&&<circle key={i} cx={i*step} cy={pad+ih-((v-mn)/rng)*ih} r="3" fill={color} style={{filter:`drop-shadow(0 0 4px ${color}60)`}}/>)}</svg>{label&&<div style={{textAlign:'center',fontSize:'10px',color:C.muted,marginTop:6}}>{label}</div>}</div>)}
@@ -541,7 +562,7 @@ function OverviewPage({onNav,token,sysStatus}){
 function ReactorPage({token,userId}){
   const[ct,setCt]=useState('');const[pr,setPr]=useState('');const[fr,setFr]=useState('');
   const[res,setRes]=useState(null);const[ak,setAk]=useState(0);const[saving,setSaving]=useState(false);const[history,setHistory]=useState([]);const[lastRead,setLastRead]=useState(null);
-  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[benchInfo,setBenchInfo]=useState('');const[confidence,setConfidence]=useState(null);
+  const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[trendInfo,setTrendInfo]=useState('');const[benchInfo,setBenchInfo]=useState(null);const[confidence,setConfidence]=useState(null);
 
   useEffect(()=>{if(!token)return;
     // Load last AI log from Supabase for persistent insights
@@ -553,7 +574,7 @@ function ReactorPage({token,userId}){
         const eff=+(ai.efficiency||95),tPct=+(ai.temperature_pct||90),pPct=+(ai.pressure_pct||88);
         setRes({eff,tPct,pPct,recs,overall:ai.alert_level||'SAFE'});setAk(1);
         setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
-        setTrendInfo(safeText(ai.trend_analysis));setBenchInfo(safeText(ai.benchmarks));
+        setTrendInfo(safeText(ai.trend_analysis));setBenchInfo(ai.benchmarks||null);
         _lastAiResponse['reactor']=ai;
       }
     });
@@ -579,11 +600,11 @@ function ReactorPage({token,userId}){
       recs=(ai.recommendations||[]).map(r=>({title:r.title,desc:safeText(r.desc||r.description),sev:r.severity||'info'}));
       if(!recs.length)recs.push({title:'AI Analysis Complete',desc:'All parameters assessed.',sev:'safe'});
       nFlux=ai.neutron_flux||(2.2+Math.random()*.4).toFixed(1)+'e13';cRod=ai.control_rod_position||Math.round(60+Math.random()*15);xenon=ai.xenon_level||+(1+Math.random()*.5).toFixed(1);
-    const _reasoning=ai?.reasoning||[];const _cross=ai?.cross_module_impacts||[];const _trend=safeText(ai?.trend_analysis);const _bench=safeText(ai?.benchmarks);const _conf=ai?.confidence||null;
+    const _reasoning=ai?.reasoning||[];const _cross=ai?.cross_module_impacts||[];const _trend=safeText(ai?.trend_analysis);const _bench=ai?.benchmarks||null;const _conf=ai?.confidence||null;
     setConfidence(_conf);setReasoning(_reasoning);setCrossImpacts(_cross);setTrendInfo(_trend);setBenchInfo(_bench);
     } else {
       const fb=fallback(t,p,f);eff=fb.eff;tPct=fb.tPct;pPct=fb.pPct;recs=fb.recs;overall=fb.overall;nFlux=fb.nFlux;cRod=fb.cRod;xenon=fb.xenon;
-      setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');setBenchInfo('');
+      setConfidence(null);setReasoning([]);setCrossImpacts([]);setTrendInfo('');setBenchInfo(null);
     }
     setRes({eff,tPct,pPct,recs,overall});setAk(k=>k+1);setAiActive(false);
     // Persist AI insights
@@ -607,11 +628,31 @@ function ReactorPage({token,userId}){
         <Card title="Core Performance" delay={.1}>{res?<div key={ak} style={{display:'flex',justifyContent:'space-around',padding:'12px 0 20px',animation:'fadeIn .4s'}}><Gauge value={Math.round(res.eff)} label="Efficiency"/><Gauge value={Math.round(res.tPct)} label="Temperature"/><Gauge value={Math.round(res.pPct)} label="Pressure"/></div>:<div style={{padding:30,textAlign:'center',color:C.muted,fontSize:'12px'}}>Run analysis to see gauges</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,borderTop:`1px solid ${C.border}`,paddingTop:16}}>{[['Neutron Flux',nf,'n/cm\u00B2s'],['Control Rod',cr,'Position'],['Xenon',xl,'Level']].map(([l,v,u])=>(<div key={l} className="card-hover" style={{background:C.bg,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`}}><div style={{fontSize:'9px',color:C.muted,textTransform:'uppercase'}}>{l}</div><div style={{fontFamily:'monospace',fontSize:'16px',fontWeight:700,margin:'4px 0 2px'}}>{v}</div><div style={{fontSize:'8px',color:C.muted}}>{u}</div></div>))}</div>
         </Card>
-        {res&&<Card title="AI Insights" delay={.2}><div key={ak}>{res.recs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {res&&<Card title="AI Insights" delay={.2}><div key={ak}>{res.recs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3,color:r.sev==='critical'?C.red:C.text}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`,animation:`fadeUp .3s ease-out ${i*.1}s both`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
-        {benchInfo&&<Card title="IAEA Benchmark Check" delay={.4}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{benchInfo}</div></Card>}
+        {benchInfo&&<Card title="IAEA Benchmark Check" delay={.4}><div>{typeof benchInfo==='object'&&benchInfo!==null?Object.entries(benchInfo).map(([k,v],i)=>{
+          const param=k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+          if(typeof v==='object'&&v!==null){
+            const cur=v.current??v.value;const lim=v.limit;const opt=v.optimal_center||v.optimal;const ttl=v.time_to_limit;const dev=v.deviation_from_optimal_center??v.deviation;
+            const severity=ttl&&typeof ttl==='string'&&parseInt(ttl)<30?C.red:dev&&Math.abs(dev)>20?C.orange:C.green;
+            return(<div key={k} style={{display:'flex',gap:10,marginBottom:10,padding:'10px 12px',background:severity+'08',borderRadius:8,border:`1px solid ${severity}15`,animation:`fadeUp .3s ease-out ${i*.08}s both`}}>
+              <div style={{width:6,borderRadius:3,background:severity,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:'12px',fontWeight:600,color:C.text,marginBottom:4}}>{param}</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:'6px 16px',fontSize:'11px'}}>
+                  {cur!=null&&<span style={{color:C.dim}}>Current: <span style={{color:severity,fontWeight:600,fontFamily:'monospace'}}>{cur}</span></span>}
+                  {lim!=null&&<span style={{color:C.dim}}>Limit: <span style={{fontFamily:'monospace',color:C.muted}}>{lim}</span></span>}
+                  {opt!=null&&<span style={{color:C.dim}}>Optimal: <span style={{fontFamily:'monospace',color:C.muted}}>{opt}</span></span>}
+                  {dev!=null&&<span style={{color:C.dim}}>Deviation: <span style={{fontFamily:'monospace',color:severity,fontWeight:600}}>{dev>0?'+':''}{dev}</span></span>}
+                  {ttl!=null&&<span style={{color:C.dim}}>Time to limit: <span style={{fontFamily:'monospace',color:severity,fontWeight:600}}>{ttl}</span></span>}
+                </div>
+              </div>
+            </div>)
+          }
+          return(<div key={k} style={{fontSize:'11px',color:C.dim,marginBottom:4,padding:'4px 0'}}><span style={{fontWeight:600}}>{param}:</span> {safeText(v)}</div>)
+        }):<div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safeText(benchInfo)}</div>}</div></Card>}
         {history.length>1&&<Card title="Efficiency History" delay={.45}><LnChart data={history.map(h=>+h.efficiency||0).reverse()} color={C.red} showArea label="Last readings"/></Card>}
       </div>
       <Card title="Parameters" delay={.15}>
@@ -668,7 +709,7 @@ function ThermalPage({token,userId}){
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Power Output History" delay={.1}>{readings.length>1?<LnChart data={readings.map(r=>+r.current_output||0).reverse()} color={C.red} showArea label={`Last ${readings.length} readings`}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>Run calculations to build history</div>}</Card>
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency||0).reverse()} color={C.green} showArea label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
-        {aiRecs.length>0&&<Card title="AI Insights" delay={.22}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.22}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
@@ -698,11 +739,19 @@ function MaterialsPage({token,userId}){
         _lastAiResponse['materials']=ai;}
     });
     dbGet('nuclear_materials',token,'order=material_name.asc').then(d=>{if(d?.length){setMats(d);setSel(d[0].id)}});},[token]);
-  const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;setSaving(true);setAiActive(true);
+  const[matWarning,setMatWarning]=useState(null);
+  const addMat=async()=>{if(!newName||isNaN(parseFloat(newDeg)))return;setSaving(true);setAiActive(true);setMatWarning(null);
     const deg=parseFloat(newDeg);
     const ai=await geminiAnalyze('materials',{material_name:newName,degradation_pct:deg},mats,token,userId);
     let st,remLife,corrRate;
     if(ai){
+      // Check if AI flagged the material as invalid
+      if(ai.material_valid===false){
+        setMatWarning(`"${newName}" is not a recognized nuclear-grade material. ${(ai.recommendations||[]).map(r=>safeText(r.desc||r.description)).join(' ')}`);
+        setConfidence(ai.confidence||null);setReasoning(ai.reasoning||[]);setCrossImpacts(ai.cross_module_impacts||[]);
+        setAiRecs((ai.recommendations||[]).map(r=>({title:safeText(r.title),desc:safeText(r.desc||r.description),sev:r.severity||'warning'})));
+        setAiActive(false);setSaving(false);return;
+      }
       st=ai.alert_level==='SAFE'?'safe':ai.alert_level==='MONITOR'?'monitor':'warning';
       remLife=ai.remaining_life_months||Math.round((100-deg)/1.5);
       corrRate=ai.corrosion_rate||Math.round(deg*.3*100)/100;
@@ -728,13 +777,14 @@ function MaterialsPage({token,userId}){
         <Card title="Degradation Levels" delay={.1}>{mats.length?<BrChart data={mats.map(m=>+m.degradation_pct||0)} labels={mats.map(m=>m.material_name?.slice(0,10))}/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No materials tracked yet. Add one.</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:14,borderTop:`1px solid ${C.border}`,paddingTop:12}}>{mats.map(m=>(<div key={m.id} style={{display:'flex',justifyContent:'space-between',fontSize:'11px',padding:'3px 0'}}><span style={{color:C.dim}}>{m.material_name}</span><span style={{fontFamily:'monospace',color:(+m.degradation_pct)>12?C.orange:C.green,fontWeight:600}}>{(+m.degradation_pct).toFixed(1)}%</span></div>))}</div>
         </Card>
-        {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.3}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
+        {matWarning&&<div style={{background:C.orangeDim,border:`1px solid ${C.orange}25`,borderRadius:10,padding:'12px 16px',marginBottom:12,animation:'fadeUp .3s'}}><div style={{display:'flex',gap:8,alignItems:'flex-start'}}><span style={{fontSize:'16px',flexShrink:0}}>{'\u26A0'}</span><div><div style={{fontSize:'12px',fontWeight:600,color:C.orange,marginBottom:4}}>Material Not Recognized</div><div style={{fontSize:'11px',color:C.dim,lineHeight:1.4}}>{matWarning}</div></div></div></div>}
         <Card title="Add Material" delay={.15}>
-          <Inp label="Material Name" value={newName} onChange={setNewName} required hint="e.g. Zircaloy-4"/>
+          <Inp label="Material Name" value={newName} onChange={setNewName} required type="text" hint="e.g. Zircaloy-4"/>
           <Inp label="Degradation %" value={newDeg} onChange={setNewDeg} unit="%" required min={0} max={100}/>
           <Btn onClick={addMat} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Add Material'}</Btn>
         </Card>
@@ -792,14 +842,14 @@ function OperationsPage({token,userId}){
             <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{background:(priC[t.priority]||C.cyan)+'18',color:priC[t.priority]||C.cyan,fontSize:'9px',fontWeight:700,padding:'3px 8px',borderRadius:4}}>{t.priority}</span><button onClick={e=>{e.stopPropagation();complete(t.id)}} style={{background:C.greenDim,border:`1px solid ${C.green}30`,borderRadius:4,color:C.green,fontSize:'9px',padding:'2px 6px',cursor:'pointer'}}>{'\u2713'}</button></div></div>
           </div>)):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No tasks. Add one.</div>}
         </Card>
-        {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`,animation:`slideIn .3s ease-out ${i*.1}s both`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {schedInsights&&<Card title="Scheduling Insights" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{schedInsights}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.35}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="Add Task" delay={.15}>
-          <Inp label="Task Name" value={newTask} onChange={setNewTask} required/>
+          <Inp label="Task Name" value={newTask} onChange={setNewTask} required type="text"/>
           <div style={{marginBottom:18}}><label style={{fontSize:'12px',color:C.dim,fontWeight:500,display:'block',marginBottom:6}}>Date <span style={{color:C.red}}>*</span></label><input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} className="input-focus" style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'11px 14px',color:C.text,fontSize:'14px',outline:'none',boxSizing:'border-box',colorScheme:'dark'}}/></div>
           <div style={{display:'flex',gap:8,marginBottom:18}}><div style={{flex:1}}><label style={{fontSize:'12px',color:C.dim,display:'block',marginBottom:6}}>Priority</label><select value={newPri} onChange={e=>setNewPri(e.target.value)} style={{width:'100%',background:C.bgInput,border:`1.5px solid ${C.borderLight}`,borderRadius:8,padding:'11px',color:C.text,fontSize:'13px',outline:'none',appearance:'none'}}><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></div><div style={{flex:1}}><Inp label="Hours" value={newHrs} onChange={setNewHrs} min={1} max={72}/></div></div>
           <Btn onClick={add} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Schedule Task'}</Btn>
@@ -934,7 +984,7 @@ function SafetyPage({token,userId}){
           </div>)}):<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No alerts. System clean.</div>}
         </Card>
         {safetyPosture&&<Card title="Safety Posture Assessment" delay={.15}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safetyPosture}</div></Card>}
-        {aiRecs.length>0&&<Card title="AI Safety Recommendations" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Safety Recommendations" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {regGaps.length>0&&<Card title="Regulatory Gaps" delay={.3}><div>{regGaps.map((g,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.red+'08',borderRadius:8,border:`1px solid ${C.red}15`}}><span style={{color:C.red,fontSize:'12px'}}>{'\u26A0'}</span><span style={{fontSize:'11px',color:C.dim}}>{g}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Alert Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
@@ -950,8 +1000,8 @@ function SafetyPage({token,userId}){
           :<div style={{color:C.muted,fontSize:'12px',textAlign:'center',padding:12}}>No standards tracked. Add one.</div>}
         </Card>
         <Card title="Add Standard" delay={.25}>
-          <Inp label="Standard Name" value={newStd} onChange={setNewStd} required hint="e.g. NRC 10 CFR 50"/>
-          <Inp label="Standard Code" value={newCode} onChange={setNewCode} hint="Optional"/>
+          <Inp label="Standard Name" value={newStd} onChange={setNewStd} required type="text" hint="e.g. NRC 10 CFR 50"/>
+          <Inp label="Standard Code" type="text" value={newCode} onChange={setNewCode} hint="Optional"/>
           <Btn onClick={addComp} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Add Standard'}</Btn>
         </Card>
       </div>
@@ -1002,13 +1052,13 @@ function EnergyPage({token,userId}){
         <Card title="Efficiency Trend" delay={.2}>{readings.length>1?<LnChart data={readings.map(r=>+r.efficiency_pct||0).reverse()} color={C.green} label="Efficiency %"/>:<div style={{color:C.muted,fontSize:'12px',padding:20,textAlign:'center'}}>No data yet</div>}</Card>
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,animation:`slideIn .3s ease-out ${i*.08}s both`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
         {trendInfo&&<Card title="Traffic & Yield Trends" delay={.3}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
-        {aiRecs.length>0&&<Card title="AI Insights" delay={.27}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{r.title}</div><div style={{fontSize:'11px',color:C.dim}}>{r.desc}</div></div></div>))}</div></Card>}
+        {aiRecs.length>0&&<Card title="AI Insights" delay={.27}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.32}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
         {deployInsights&&<Card title="Deployment Insights" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{deployInsights}</div></Card>}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
         <Card title="EGM Parameters" delay={.15}>
-          <Inp label="Location" value={loc} onChange={setLoc} required/>
+          <Inp label="Location" value={loc} onChange={setLoc} required type="text"/>
           <Inp label="Foot Traffic" value={ft} onChange={setFt} unit="steps/min" required min={1} max={200}/>
           <Inp label="Mat Area" value={area} onChange={setArea} unit="m\u00B2" required min={1} max={500}/>
           <Btn onClick={calc} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Calculation'}</Btn>
