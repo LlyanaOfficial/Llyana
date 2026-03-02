@@ -299,7 +299,6 @@ function getAiCount() {
     return d;
   } catch { return { date: new Date().toLocaleDateString('en-CA', {timeZone:'America/Los_Angeles'}), count: 0 }; }
 }
-}
 function incAiCount() {
   const d = getAiCount();
   d.count++;
