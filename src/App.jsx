@@ -20,7 +20,7 @@ class ModuleErrorBoundary extends Component {
 
 // ═══════════════════════════════════════════════════════════════
 // LLYANA v4.0 — Nuclear Engineering AI Dashboard
-// Avolv Energy Technologies | Gemini AI + Supabase Integration
+// Avolv Energy Technologies | Llyana Nuclear AI Engine
 // ═══════════════════════════════════════════════════════════════
 
 const _p=[112,100,102,101,116,105,111,116,105,115,119,117,98,100,116,122,116,119,108,106];
@@ -45,8 +45,8 @@ const dbPost=(t,d,tk)=>db('POST',t,tk,d);
 const dbPatch=(t,id,d,tk)=>db('PATCH',t,tk,d,`id=eq.${id}`);
 const dbDelete=(t,id,tk)=>db('DELETE',t,tk,null,`id=eq.${id}`);
 
-// ── Gemini AI Engine ─────────────────────────────────────────
-// Gemini AI Key (encoded)
+// ── Llyana AI Engine ─────────────────────────────────────────
+// Llyana AI Key (encoded)
 const _gk=[[65,73,122,97,83,121,68,106,68,103,102,52,57],[107,52,95,104,114,100,107,79,75,107,117,106,104],[113,77,57,95,68,49,109,48,65,89,86,97,65]];
 const GEMINI_KEY=_gk.map(p=>Array.isArray(p)?String.fromCharCode(...p):p).join('');
 const GEMINI_MODEL = 'gemini-2.5-flash-lite';
@@ -361,7 +361,7 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
   if (!GEMINI_KEY || GEMINI_KEY === 'PASTE_HERE') { console.warn('Llyana: No Gemini key'); return null; }
   // Pre-check: don't even try if daily limit exhausted
   if (getAiCount().count >= AI_DAILY_LIMIT) {
-    setGlobalAiStatus(`Daily limit reached (${AI_DAILY_LIMIT} RPD). Resets at midnight PT (10AM SAST). Upgrade billing for more.`);
+    setGlobalAiStatus(`Llyana AI daily analysis limit reached (${AI_DAILY_LIMIT} analyses/day). Resets at 10:00 AM SAST. Contact admin to upgrade.`);
     setTimeout(()=>setGlobalAiStatus(null),8000);
     return null;
   }
@@ -375,18 +375,19 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ contents:[{parts:[{text:`${LLYANA_CORE}\n\n${MOD_PROMPTS[module]}\n\nINPUT: ${JSON.stringify(params)}${histCtx}${prevAi}${brainCtx}\n\nYou are Llyana — one unified AI brain. Analyze this module now. Compare with your previous analysis if available. Reference findings from other modules to provide cross-cutting insights. Note parameter changes, improving/degrading trends, and cascading impacts. KEEP YOUR RESPONSE COMPACT — max 5 reasoning steps, max 3 recommendations, max 3 cross-module impacts. JSON only, no trailing text.`}]}], generationConfig:{temperature:0.3,maxOutputTokens:4000} })
     });
+    trackRpm(); // Count every request to match Google's RPM tracking
     if (r.status === 429) {
       const errBody = await r.text().catch(()=>'');
       const currentCount = getAiCount().count;
       const isDaily = errBody.includes('RESOURCE_EXHAUSTED') || currentCount >= AI_DAILY_LIMIT;
       if (isDaily || currentCount >= AI_DAILY_LIMIT) {
         if (currentCount < AI_DAILY_LIMIT) syncToApiLimit();
-        setGlobalAiStatus(`Daily limit reached (${AI_DAILY_LIMIT} RPD). Resets at midnight PT (10AM SAST).`);
+        setGlobalAiStatus(`Llyana AI daily limit reached. Resets at 10:00 AM SAST.`);
         setTimeout(()=>setGlobalAiStatus(null),8000);
         return null;
       }
       const wait = retryNum === 0 ? 4 : retryNum === 1 ? 8 : 15;
-      setGlobalAiStatus(`Rate limit (${AI_RPM_LIMIT} req/min). Auto-retrying in ${wait}s...`);
+      setGlobalAiStatus(`Llyana AI processing queue full. Auto-retrying in ${wait}s...`);
       console.log(`Llyana: RPM rate limited, waiting ${wait}s (attempt ${retryNum+1})...`);
       await new Promise(x=>setTimeout(x,wait*1000));
       setGlobalAiStatus(null);
@@ -404,7 +405,6 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
     console.log('Llyana: First rec:', JSON.stringify((parsed.recommendations||[])[0]));
     console.log('Llyana: First reasoning:', JSON.stringify((parsed.reasoning||[])[0]));
     incAiCount();
-    trackRpm();
     // Skip brain storage for rejected materials (material_valid=false)
     if(parsed.material_valid===false){
       console.log('Llyana: Material rejected, skipping brain save');
@@ -426,7 +426,7 @@ async function geminiAnalyze(module, params, history = [], token = null, userId 
     let res = await attempt(0);
     if (res === 'RETRY') res = await attempt(1);
     if (res === 'RETRY') res = await attempt(2);
-    if (res === 'RETRY') { setGlobalAiStatus('AI temporarily unavailable. Try again in a minute.'); setTimeout(()=>setGlobalAiStatus(null),5000); return null; }
+    if (res === 'RETRY') { setGlobalAiStatus('Llyana AI temporarily unavailable. Please try again shortly.'); setTimeout(()=>setGlobalAiStatus(null),5000); return null; }
     return res;
   } catch(e) { console.error('Llyana Gemini error:', e); return null; }
 }
@@ -439,7 +439,7 @@ const C={bg:'#060608',bgCard:'#0D0D10',bgCardHover:'#131318',bgSidebar:'#0A0A0D'
 function getAlertLevel(v,min,max){if(v==null||isNaN(v))return'UNKNOWN';const d=Math.abs(v-(min+(max-min)/2))/((max-min)/2);return d<0.8?'SAFE':d<0.9?'MONITOR':d<1.0?'WARNING':'CRITICAL'}
 const AC={SAFE:C.green,MONITOR:C.yellow,WARNING:C.orange,CRITICAL:C.red,UNKNOWN:C.gray};
 
-// Parse AI reasoning steps from any Gemini response format
+// Parse AI reasoning steps from Llyana AI response
 function parseReasoning(steps) {
   if (!steps || !Array.isArray(steps)) return [];
   return steps.map((r, i) => {
@@ -457,7 +457,7 @@ function parseReasoning(steps) {
   });
 }
 
-// Parse AI cross-module impacts from any Gemini response format
+// Parse AI cross-module impacts from Llyana AI response
 function parseCrossImpacts(impacts) {
   if (!impacts || !Array.isArray(impacts)) return [];
   return impacts.map(c => {
@@ -470,11 +470,11 @@ function parseCrossImpacts(impacts) {
   });
 }
 
-// Parse AI recommendations from any Gemini response format
+// Parse AI recommendations from Llyana AI response
 function parseRecs(recs) {
   if (!recs || !Array.isArray(recs)) return [];
   return recs.map(r => {
-    // Gemini sometimes returns plain strings instead of objects
+    // AI sometimes returns plain strings instead of objects
     if (typeof r === 'string') {
       // Split long string into title (first sentence) and desc (rest)
       const dot = r.indexOf('. ');
@@ -743,7 +743,7 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rp
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:6,height:6,borderRadius:'50%',background:sysStatus.color,animation:'pulse 2s infinite'}}/><span style={{fontSize:'9px',color:C.muted,letterSpacing:'.5px'}}>SYSTEM STATUS</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>Status: <span style={{color:sysStatus.color}}>{sysStatus.label}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>DB: <span style={{color:sysStatus.dbOk?C.green:C.red}}>{sysStatus.dbOk?'CONNECTED':'OFFLINE'}</span></div>
-          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<15?C.cyan:aiCount<18?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<15?C.cyan:aiCount<18?C.yellow:C.red}}>{Math.max(0,AI_DAILY_LIMIT-aiCount)}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:1}}>RPM: <span style={{color:rpm<7?C.cyan:rpm<9?C.yellow:C.red}}>{rpm}/{AI_RPM_LIMIT}</span>{rpm>0&&rpmReset>0&&<span style={{color:C.muted}}> resets {rpmReset}s</span>}</div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.muted,marginTop:2}}>Resets: <span style={{color:C.dim}}>{resetTimer}</span></div>
         </div>
@@ -758,7 +758,18 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rp
             {onLogout&&<button onClick={onLogout} style={{background:C.bgInput,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:'10px',padding:'4px 10px',cursor:'pointer'}}>Sign Out</button>}
           </div>
         </header>
-        <main style={{padding:24}} className={`p-${page}`} key={page}>{children}</main>
+        <main style={{padding:24}} className={`p-${page}`} key={page}>
+          {aiCount>=AI_DAILY_LIMIT&&<div style={{background:C.red+'12',border:`1px solid ${C.red}30`,borderRadius:10,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:'16px'}}>⚡</span>
+            <div><div style={{fontSize:'12px',fontWeight:600,color:C.red}}>Llyana AI Daily Limit Reached</div>
+            <div style={{fontSize:'11px',color:C.dim,marginTop:2}}>All {AI_DAILY_LIMIT} analyses used today. AI features will resume at 10:00 AM SAST. Contact your administrator to upgrade for unlimited analyses.</div></div>
+          </div>}
+          {aiCount>=Math.floor(AI_DAILY_LIMIT*0.75)&&aiCount<AI_DAILY_LIMIT&&<div style={{background:C.orange+'10',border:`1px solid ${C.orange}25`,borderRadius:10,padding:'10px 14px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:'14px'}}>⚠</span>
+            <div style={{fontSize:'11px',color:C.dim}}><span style={{fontWeight:600,color:C.orange}}>Llyana AI:</span> {Math.max(0,AI_DAILY_LIMIT-aiCount)} analyses remaining today. Use them wisely — resets at 10:00 AM SAST.</div>
+          </div>}
+          {children}
+        </main>
       </div>
       {aiStatus&&<div style={{position:'fixed',bottom:24,left:'50%',transform:'translateX(-50%)',background:'#1a1a2e',border:`1px solid ${C.cyan}40`,borderRadius:12,padding:'12px 24px',display:'flex',alignItems:'center',gap:10,zIndex:9999,animation:'fadeUp .3s ease-out',boxShadow:`0 4px 20px rgba(6,182,212,0.15)`}}><div style={{width:14,height:14,border:`2px solid ${C.cyan}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 1s linear infinite'}}/><span style={{fontSize:'12px',color:C.cyan,fontWeight:500}}>{aiStatus}</span></div>}
     </div>
@@ -1406,7 +1417,7 @@ function EnergyPage({token,userId}){
           <Btn onClick={calc} disabled={saving||aiActive}>{aiActive?'AI Analyzing...':saving?'Processing...':'Run Calculation'}</Btn>
         </Card>
         <Card title="Projection Model" delay={.25}>
-          {[{id:'ai',l:'AI Optimized',d:'Gemini-powered projection'},{id:'linear',l:'Linear Regression',d:'Traditional'},{id:'hybrid',l:'Hybrid',d:'AI + historical'}].map(m=>(
+          {[{id:'ai',l:'AI Optimized',d:'Llyana AI projection'},{id:'linear',l:'Linear Regression',d:'Traditional'},{id:'hybrid',l:'Hybrid',d:'AI + historical'}].map(m=>(
             <div key={m.id} onClick={()=>setModel(m.id)} style={{display:'flex',gap:10,alignItems:'center',padding:'8px 0',cursor:'pointer'}}>
               <div style={{width:16,height:16,borderRadius:'50%',border:`2px solid ${model===m.id?C.red:C.borderLight}`,display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s'}}>{model===m.id&&<div style={{width:8,height:8,borderRadius:'50%',background:C.red}}/>}</div>
               <div><div style={{fontSize:'12px',fontWeight:500}}>{m.l}</div><div style={{fontSize:'9px',color:C.muted}}>{m.d}</div></div>
