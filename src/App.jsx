@@ -296,9 +296,14 @@ const AC={SAFE:C.green,MONITOR:C.yellow,WARNING:C.orange,CRITICAL:C.red,UNKNOWN:
 function safeText(v) {
   if (v == null) return '';
   if (typeof v === 'string') return v;
-  if (typeof v === 'number') return String(v);
-  if (Array.isArray(v)) return v.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(', ');
-  if (typeof v === 'object') return Object.entries(v).map(([k,val]) => `${k}: ${val}`).join('. ');
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return v.map(x => safeText(x)).join(', ');
+  if (typeof v === 'object') {
+    return Object.entries(v).map(([k, val]) => {
+      const sv = (val != null && typeof val === 'object') ? JSON.stringify(val) : String(val ?? '');
+      return `${k}: ${sv}`;
+    }).join('. ');
+  }
   return String(v);
 }
 
