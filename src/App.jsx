@@ -262,16 +262,32 @@ const AI_RPM_LIMIT = 15;
 // Track request timestamps for RPM display
 let _rpmTimestamps = [];
 let _rpmCallback = null;
+let _rpmResetCallback = null;
+let _rpmInterval = null;
 function getRpm() {
   const now = Date.now();
   _rpmTimestamps = _rpmTimestamps.filter(t => now - t < 60000);
   return _rpmTimestamps.length;
 }
+function getRpmReset() {
+  if (!_rpmTimestamps.length) return 0;
+  const now = Date.now();
+  const oldest = Math.min(..._rpmTimestamps.filter(t => now - t < 60000));
+  return Math.max(0, Math.ceil((oldest + 60000 - now) / 1000));
+}
 function trackRpm() {
   _rpmTimestamps.push(Date.now());
   if (_rpmCallback) _rpmCallback(getRpm());
-  // Auto-update RPM display as requests age out
-  setTimeout(() => { if (_rpmCallback) _rpmCallback(getRpm()); }, 60000);
+  if (_rpmResetCallback) _rpmResetCallback(getRpmReset());
+  // Start countdown interval if not already running
+  if (!_rpmInterval) {
+    _rpmInterval = setInterval(() => {
+      const r = getRpm();
+      if (_rpmCallback) _rpmCallback(r);
+      if (_rpmResetCallback) _rpmResetCallback(getRpmReset());
+      if (r === 0) { clearInterval(_rpmInterval); _rpmInterval = null; }
+    }, 1000);
+  }
 }
 function getAiCount() {
   try {
@@ -677,7 +693,7 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════
 const NAV=[{id:'overview',label:'Overview',d:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'},{id:'reactor',label:'Reactor Core',d:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83'},{id:'thermal',label:'Thermal & Power',d:'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z'},{id:'materials',label:'Materials',d:'M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5'},{id:'operations',label:'Operations',d:'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'},{id:'safety',label:'Safety',d:'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'},{id:'energy',label:'Energy Yield',d:'M22 12h-4l-3 9L9 3l-3 9H2'}];
 
-function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rpm}){
+function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rpm,rpmReset}){
   const[time,setTime]=useState(new Date());
   const[resetTimer,setResetTimer]=useState('');
   useEffect(()=>{const t=setInterval(()=>{
@@ -703,7 +719,7 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rp
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>Status: <span style={{color:sysStatus.color}}>{sysStatus.label}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>DB: <span style={{color:sysStatus.dbOk?C.green:C.red}}>{sysStatus.dbOk?'CONNECTED':'OFFLINE'}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<900?C.cyan:aiCount<980?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
-          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:1}}>RPM: <span style={{color:rpm<10?C.cyan:rpm<14?C.yellow:C.red}}>{rpm}/{AI_RPM_LIMIT}</span> <span style={{color:C.muted}}>this min</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:1}}>RPM: <span style={{color:rpm<10?C.cyan:rpm<14?C.yellow:C.red}}>{rpm}/{AI_RPM_LIMIT}</span>{rpm>0&&rpmReset>0&&<span style={{color:C.muted}}> resets {rpmReset}s</span>}</div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.muted,marginTop:2}}>Resets: <span style={{color:C.dim}}>{resetTimer}</span></div>
         </div>
       </aside>
@@ -1385,11 +1401,12 @@ export default function App(){
   const[aiStatus,setAiStatus]=useState(null);
   const[aiCount,setAiCount]=useState(getAiCount().count);
   const[rpm,setRpm]=useState(0);
+  const[rpmReset,setRpmReset]=useState(0);
   const token=user?.token;const userId=user?.id;
   const sysStatus=useSystemStatus(token);
 
   // Wire up global AI status callback
-  useEffect(()=>{_aiStatusCallback=setAiStatus;_aiCountCallback=setAiCount;_rpmCallback=setRpm;return()=>{_aiStatusCallback=null;_aiCountCallback=null;_rpmCallback=null}},[]);
+  useEffect(()=>{_aiStatusCallback=setAiStatus;_aiCountCallback=setAiCount;_rpmCallback=setRpm;_rpmResetCallback=setRpmReset;return()=>{_aiStatusCallback=null;_aiCountCallback=null;_rpmCallback=null;_rpmResetCallback=null}},[]);
 
   // Preload ALL modules' last AI responses into cross-module brain
   useEffect(()=>{if(!token)return;
@@ -1423,5 +1440,5 @@ export default function App(){
     safety:<ModuleErrorBoundary><SafetyPage token={token} userId={userId}/></ModuleErrorBoundary>,
     energy:<ModuleErrorBoundary><EnergyPage token={token} userId={userId}/></ModuleErrorBoundary>,
   };
-  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus} aiCount={aiCount} rpm={rpm}>{pg[page]||pg.overview}</Layout>;
+  return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus} aiCount={aiCount} rpm={rpm} rpmReset={rpmReset}>{pg[page]||pg.overview}</Layout>;
 }
