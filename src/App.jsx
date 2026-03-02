@@ -257,8 +257,8 @@ function CrossModuleAlertBanner({alert}) {
 }
 
 // AI request counter (persists per day in sessionStorage)
-const AI_DAILY_LIMIT = 1000;
-const AI_RPM_LIMIT = 15;
+const AI_DAILY_LIMIT = 20;
+const AI_RPM_LIMIT = 10;
 // Track request timestamps for RPM display
 let _rpmTimestamps = [];
 let _rpmCallback = null;
@@ -718,8 +718,8 @@ function Layout({page,onNav,children,user,onLogout,sysStatus,aiStatus,aiCount,rp
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:6,height:6,borderRadius:'50%',background:sysStatus.color,animation:'pulse 2s infinite'}}/><span style={{fontSize:'9px',color:C.muted,letterSpacing:'.5px'}}>SYSTEM STATUS</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>Status: <span style={{color:sysStatus.color}}>{sysStatus.label}</span></div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim}}>DB: <span style={{color:sysStatus.dbOk?C.green:C.red}}>{sysStatus.dbOk?'CONNECTED':'OFFLINE'}</span></div>
-          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<900?C.cyan:aiCount<980?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
-          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:1}}>RPM: <span style={{color:rpm<10?C.cyan:rpm<14?C.yellow:C.red}}>{rpm}/{AI_RPM_LIMIT}</span>{rpm>0&&rpmReset>0&&<span style={{color:C.muted}}> resets {rpmReset}s</span>}</div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:2}}>AI: <span style={{color:aiCount<15?C.cyan:aiCount<18?C.yellow:C.red}}>{AI_DAILY_LIMIT-aiCount}/{AI_DAILY_LIMIT}</span> <span style={{color:C.muted}}>remaining</span></div>
+          <div style={{fontSize:'9px',fontFamily:'monospace',color:C.dim,marginTop:1}}>RPM: <span style={{color:rpm<7?C.cyan:rpm<9?C.yellow:C.red}}>{rpm}/{AI_RPM_LIMIT}</span>{rpm>0&&rpmReset>0&&<span style={{color:C.muted}}> resets {rpmReset}s</span>}</div>
           <div style={{fontSize:'9px',fontFamily:'monospace',color:C.muted,marginTop:2}}>Resets: <span style={{color:C.dim}}>{resetTimer}</span></div>
         </div>
       </aside>
