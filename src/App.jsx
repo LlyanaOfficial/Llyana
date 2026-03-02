@@ -1,4 +1,22 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Component } from "react";
+
+// Error boundary to prevent blank pages on render errors
+class ModuleErrorBoundary extends Component {
+  constructor(props){super(props);this.state={hasError:false,error:null}}
+  static getDerivedStateFromError(error){return{hasError:true,error}}
+  componentDidCatch(error,info){console.error('Llyana module crash:',error,info)}
+  render(){
+    if(this.state.hasError){return(
+      <div style={{padding:40,textAlign:'center'}}>
+        <div style={{fontSize:40,marginBottom:16}}>⚠</div>
+        <div style={{fontSize:16,fontWeight:600,color:'#ef4444',marginBottom:8}}>Module Error</div>
+        <div style={{fontSize:12,color:'#94a3b8',marginBottom:16}}>{this.state.error?.message||'An unexpected error occurred'}</div>
+        <button onClick={()=>this.setState({hasError:false,error:null})} style={{background:'#1e293b',border:'1px solid #334155',borderRadius:8,padding:'8px 16px',color:'#e2e8f0',cursor:'pointer',fontSize:12}}>Retry</button>
+      </div>
+    )}
+    return this.props.children;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // LLYANA v4.0 — Nuclear Engineering AI Dashboard
@@ -1056,6 +1074,7 @@ function OperationsPage({token,userId}){
       message: `Task "${task?.task_name}" (${task?.priority}) deleted. ${(f||[]).length} tasks remain.${task?.priority==='CRITICAL'?' CRITICAL task removed — verify safety compliance.':''}`
     });
   };
+  const active=tasks.filter(t=>t.status!=='completed'&&t.status!=='cancelled');
   const completed=tasks.filter(t=>t.status==='completed');
   const filtered=filter==='All'?active:active.filter(t=>t.priority===filter.toUpperCase());
   const nextDays=active.length?Math.max(0,Math.ceil((new Date(active[0]?.scheduled_date)-new Date())/86400000)):'-';
@@ -1104,7 +1123,7 @@ function SafetyPage({token,userId}){
       if(log?.full_response){const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
         setAiRecs(parseRecs(ai.recommendations));
-        setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
+        setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps((ai.regulatory_gaps||[]).map(g=>typeof g==='string'?g:safeText(g)));
         _lastAiResponse['safety']=ai;}
     });
     dbGet('alerts',token,'order=created_at.desc&limit=20').then(d=>{if(d)setAlerts(d)});
@@ -1137,7 +1156,7 @@ function SafetyPage({token,userId}){
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
       setAiRecs(parseRecs(ai.recommendations));
-      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
+      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps((ai.regulatory_gaps||[]).map(g=>typeof g==='string'?g:safeText(g)));
     }
     const approved=ai?.alert_level==='SAFE'||ai?.alert_level==='MONITOR';
     setResolveResult(approved?'approved':'flagged');
@@ -1170,6 +1189,7 @@ function SafetyPage({token,userId}){
     setTimeout(()=>{setResolving(null);setResolveNote('');setResolveResult(null)},4000);
   };
   const addComp=async()=>{if(!newStd)return;setSaving(true);setAiActive(true);
+    try{
     await dbPost('nuclear_compliance',{standard_name:newStd,standard_code:newCode||null,last_review:new Date().toISOString().slice(0,10),status:'PENDING',user_id:userId},token);
     const freshComp=await dbGet('nuclear_compliance',token,'order=standard_name.asc');if(freshComp)setComp(freshComp);
     // Run AI safety analysis
@@ -1177,16 +1197,19 @@ function SafetyPage({token,userId}){
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
       setAiRecs(parseRecs(ai.recommendations));
-      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
+      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps((ai.regulatory_gaps||[]).map(g=>typeof g==='string'?g:safeText(g)));
     } else { setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setTrendInfo('');setSafetyPosture('');setRegGaps([]); }
+    }catch(err){console.error('Llyana: Safety addComp error:',err)}
     setAiActive(false);setNewStd('');setNewCode('');setSaving(false);};
   const runSafetyAudit=async()=>{setAiActive(true);
+    try{
     const ai=await geminiAnalyze('safety',{active_alerts:alerts.filter(a=>a.status==='active'),compliance_standards:comp},alerts,token,userId);
     if(ai){
       setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
       setAiRecs(parseRecs(ai.recommendations));
-      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps(ai.regulatory_gaps||[]);
+      setTrendInfo(safeText(ai.trend_analysis));setSafetyPosture(safeText(ai.safety_posture));setRegGaps((ai.regulatory_gaps||[]).map(g=>typeof g==='string'?g:safeText(g)));
     }
+    }catch(err){console.error('Llyana: Safety audit error:',err)}
     setAiActive(false);};
   const activeAlerts=alerts.filter(a=>a.status==='active');
   const critCount=activeAlerts.filter(a=>a.alert_level==='CRITICAL').length;
@@ -1224,7 +1247,7 @@ function SafetyPage({token,userId}){
         {safetyPosture&&<Card title="Safety Posture Assessment" delay={.15}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{safetyPosture}</div></Card>}
         {aiRecs.length>0&&<Card title="AI Safety Recommendations" delay={.2}><div>{aiRecs.map((r,i)=>(<div key={i} style={{display:'flex',gap:12,marginBottom:12,padding:'10px 12px',background:r.sev==='critical'?C.red+'08':r.sev==='warning'?C.orangeDim:r.sev==='safe'?C.greenDim:C.cyanDim,borderRadius:10,border:`1px solid ${(r.sev==='critical'?C.red:r.sev==='warning'?C.orange:r.sev==='safe'?C.green:C.cyan)+'15'}`}}><div style={{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:'14px',background:(r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan)+'20',color:r.sev==='critical'?C.red:r.sev==='safe'?C.green:r.sev==='warning'?C.orange:C.cyan}}>{r.sev==='critical'?'\u2716':r.sev==='safe'?'\u2713':r.sev==='warning'?'\u26A0':'i'}</div><div><div style={{fontSize:'13px',fontWeight:600,marginBottom:3}}>{safeText(r.title)}</div><div style={{fontSize:'11px',color:C.dim}}>{safeText(r.desc)}</div></div></div>))}</div></Card>}
         {reasoning.length>0&&<Card title="AI Reasoning Chain" delay={.25}><div>{reasoning.map((r,i)=>(<div key={i} style={{display:'flex',gap:10,marginBottom:10,padding:'8px 10px',background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}><div style={{width:24,height:24,borderRadius:'50%',background:C.cyan+'20',color:C.cyan,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,flexShrink:0}}>{r.step}</div><div><div style={{fontSize:'12px',fontWeight:600,color:C.text}}>{safeText(r.action)}</div><div style={{fontSize:'11px',color:C.dim,marginTop:2}}>{safeText(r.result)}</div></div></div>))}</div></Card>}
-        {regGaps.length>0&&<Card title="Regulatory Gaps" delay={.3}><div>{regGaps.map((g,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.red+'08',borderRadius:8,border:`1px solid ${C.red}15`}}><span style={{color:C.red,fontSize:'12px'}}>{'\u26A0'}</span><span style={{fontSize:'11px',color:C.dim}}>{g}</span></div>))}</div></Card>}
+        {regGaps.length>0&&<Card title="Regulatory Gaps" delay={.3}><div>{regGaps.map((g,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.red+'08',borderRadius:8,border:`1px solid ${C.red}15`}}><span style={{color:C.red,fontSize:'12px'}}>{'\u26A0'}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(g)}</span></div>))}</div></Card>}
         {trendInfo&&<Card title="Alert Trend Analysis" delay={.35}><div style={{fontSize:'12px',color:C.dim,lineHeight:1.5}}>{trendInfo}</div></Card>}
         {crossImpacts.length>0&&<Card title="Cross-Module Impact" delay={.4}><div>{crossImpacts.map((c,i)=>(<div key={i} style={{display:'flex',gap:8,marginBottom:8,padding:'8px 10px',background:C.orangeDim,borderRadius:8,border:`1px solid ${C.orange}15`}}><span style={{fontSize:'10px',fontWeight:700,color:C.orange,textTransform:'uppercase',minWidth:70}}>{c.module}</span><span style={{fontSize:'11px',color:C.dim}}>{safeText(c.impact)}</span></div>))}</div></Card>}
       </div>
@@ -1354,12 +1377,12 @@ export default function App(){
 
   const pg={
     overview:<OverviewPage onNav={setPage} token={token} sysStatus={sysStatus}/>,
-    reactor:<ReactorPage token={token} userId={userId}/>,
-    thermal:<ThermalPage token={token} userId={userId}/>,
-    materials:<MaterialsPage token={token} userId={userId}/>,
-    operations:<OperationsPage token={token} userId={userId}/>,
-    safety:<SafetyPage token={token} userId={userId}/>,
-    energy:<EnergyPage token={token} userId={userId}/>,
+    reactor:<ModuleErrorBoundary><ReactorPage token={token} userId={userId}/></ModuleErrorBoundary>,
+    thermal:<ModuleErrorBoundary><ThermalPage token={token} userId={userId}/></ModuleErrorBoundary>,
+    materials:<ModuleErrorBoundary><MaterialsPage token={token} userId={userId}/></ModuleErrorBoundary>,
+    operations:<ModuleErrorBoundary><OperationsPage token={token} userId={userId}/></ModuleErrorBoundary>,
+    safety:<ModuleErrorBoundary><SafetyPage token={token} userId={userId}/></ModuleErrorBoundary>,
+    energy:<ModuleErrorBoundary><EnergyPage token={token} userId={userId}/></ModuleErrorBoundary>,
   };
   return<Layout page={page} onNav={setPage} user={user} onLogout={logout} sysStatus={sysStatus} aiStatus={aiStatus} aiCount={aiCount}>{pg[page]||pg.overview}</Layout>;
 }
