@@ -90,7 +90,23 @@ CRITICAL ANALYSIS REQUIREMENTS:
 (7) If ALL values look perfect — be SUSPICIOUS. Flag potential instrument calibration drift or sensor malfunction possibility.
 
 EFFICIENCY FORMULA: Base 95% minus penalties: |temp-540|*0.02, |pressure-155|*0.05, |flow-4200|*0.003. Clamp 50-99%.
-NEUTRON FLUX: 2.0-2.8e13 n/cm²s typical PWR. CONTROL ROD: 60-75% withdrawal normal. XENON: 1.0-1.5 ppm equilibrium.
+
+NEUTRON FLUX CALCULATION (MANDATORY — use physics, not estimates):
+- Power P (MWth) ≈ efficiency/100 × 3400 MWth (reference PWR)
+- Neutron flux φ = P / (Σ_f × E_f × V_core) where Σ_f ≈ 0.0028 cm⁻¹, E_f ≈ 3.2e-11 J, V_core ≈ 3.2e7 cm³
+- Simplified: φ (n/cm²s) = P_MWth × 3.1e10 / V_core. For 3400 MWth → ~2.4e13 n/cm²s
+- At reduced power: scale linearly. At 50% power → ~1.2e13
+- Temperature coefficient: -2.5 pcm/°C (negative feedback). Higher temp → lower reactivity → lower flux
+- Return as string with scientific notation: e.g. "2.41e13"
+
+CONTROL ROD POSITION: Calculate from reactivity balance. Higher temp needs less rod insertion (negative temp coefficient).
+- At optimal 540°C: ~68% withdrawn. At 585°C: ~72% (rods withdraw to compensate negative reactivity). At 300°C: ~45% (rods inserted deeper for criticality control).
+
+XENON DYNAMICS: Xe-135 is the strongest neutron poison.
+- Equilibrium at steady state: ~1.0-1.5 ppm proportional to flux level
+- After power reduction: xenon BUILDS UP (xenon pit) — peaks at 6-8 hours, decays over 24-48 hours
+- After power increase: xenon initially drops then recovers to new equilibrium
+- Flag xenon oscillation risk if power changed >20% recently
 
 JSON: {"alert_level":"...","confidence":0-100,"efficiency":N,"temperature_pct":N,"pressure_pct":N,"neutron_flux":"...","control_rod_position":N,"xenon_level":N,"reasoning":[{"step":1,"action":"...","result":"..."}],"recommendations":[{"title":"...","desc":"...","severity":"safe|warning|critical|info"}],"cross_module_impacts":[{"module":"thermal|materials|safety|operations","impact":"..."}],"trend_analysis":"...","benchmarks":"..."}`,
 
@@ -144,10 +160,20 @@ CRITICAL ANALYSIS REQUIREMENTS:
 (5) Cross-reference reactor temperature: Higher temp = faster degradation. ALWAYS connect to reactor module data.
 (6) Replacement cost/timeline: Estimate impact of unplanned replacement vs scheduled.
 
+CORROSION RATE PREDICTION (MANDATORY):
+Calculate corrosion_rate in mm/year based on:
+- Material type and known corrosion resistance
+- Temperature (higher temp = exponential increase, Arrhenius equation)
+- Coolant type (primary water chemistry: boric acid, lithium hydroxide)
+- Radiation exposure (radiolysis products accelerate corrosion)
+- Time in service (estimated from degradation %)
+Reference rates: SS-316L: 0.001-0.025 mm/yr. Inconel-690: 0.0005-0.01 mm/yr. Zircaloy-4: 0.01-0.05 mm/yr. Carbon Steel: 0.05-0.3 mm/yr.
+Also calculate: corrosion_remaining_mm (wall thickness remaining before failure threshold).
+
 Thresholds: Safe(<8%), Monitor(8-15%), Warning(15-25%), Critical(>25%).
 Embrittlement: Low(<5%), Moderate(5-10%), Elevated(10-20%), High(>20%).
 
-JSON: {"alert_level":"...","confidence":N,"material_valid":true|false,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":N,"corrosion_rate":N,"reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
+JSON: {"alert_level":"...","confidence":N,"material_valid":true|false,"degradation_assessment":"...","embrittlement_risk":"Low|Moderate|Elevated|High","remaining_life_months":N,"corrosion_rate":N,"corrosion_remaining_mm":N,"corrosion_mechanism":"...","reasoning":[...],"recommendations":[...],"cross_module_impacts":[...]}`,
 
   energy: `EGM (ENERGY-GENERATING MAT) — PIEZOELECTRIC YIELD ANALYSIS.
 
@@ -810,12 +836,16 @@ function PH({red,white,sub}){return(<div style={{marginBottom:24}}><h1 style={{f
 function OverviewPage({onNav,token,sysStatus}){
   const [hov,setHov]=useState(null);
   const [stats,setStats]=useState({reactor:null,materials:0,maint:0,alerts:0,compliance:0});
+  const[confData,setConfData]=useState([]);
   useEffect(()=>{if(!token)return;(async()=>{
     const[r,m,mt,al,co]=await Promise.all([dbGet('nuclear_reactor_readings',token,'order=created_at.desc&limit=1'),dbGet('nuclear_materials',token,'select=degradation_pct,status'),dbGet('nuclear_maintenance',token,'status=neq.completed&status=neq.cancelled&select=id,scheduled_date'),dbGet('alerts',token,'status=eq.active&select=alert_level'),dbGet('nuclear_compliance',token,'select=status')]);
     const avgDeg=m?.length?m.reduce((a,x)=>a+(+x.degradation_pct||0),0)/m.length:0;
     const nextMaint=mt?.length?Math.max(0,Math.ceil((new Date(mt.sort((a,b)=>new Date(a.scheduled_date)-new Date(b.scheduled_date))[0]?.scheduled_date)-new Date())/(86400000))):'-';
     const compOk=(co||[]).filter(c=>c.status==='COMPLIANT').length;
     setStats({reactor:r?.[0],avgDeg:avgDeg.toFixed(1),nextMaint,alerts:(al||[]).length,compliance:`${compOk}/${(co||[]).length}`,matWarn:(m||[]).filter(x=>x.status==='warning'||x.status==='critical').length,totalMaint:(mt||[]).length});
+    // Load AI confidence history
+    const logs=await dbGet('ai_analysis_log',token,'order=created_at.desc&limit=20');
+    if(logs?.length){setConfData(logs.filter(l=>l.full_response?.confidence).map(l=>({module:l.module,confidence:l.full_response.confidence,date:new Date(l.created_at).toLocaleDateString('en-GB',{day:'2-digit',month:'short'})})).reverse())}
   })()},[token]);
   const eff=stats.reactor?Math.round(+stats.reactor.efficiency||0):'-';
   const mods=[
@@ -833,7 +863,22 @@ function OverviewPage({onNav,token,sysStatus}){
     <div style={{fontSize:'14px',fontWeight:600,marginBottom:3}}>{m.title}</div><div style={{fontSize:'11px',color:C.muted,marginBottom:18}}>{m.desc}</div>
     <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:'24px',fontWeight:700,color:hov===m.id?m.sc:C.text,transition:'color .2s'}}>{m.metric}</div><div style={{fontSize:'10px',color:C.dim,marginBottom:14}}>{m.ml}</div>
     <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:6}}><span style={{fontSize:'10px',color:hov===m.id?C.red:C.muted}}>View Module</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={hov===m.id?C.red:C.muted} strokeWidth="2" style={{transition:'all .2s',transform:hov===m.id?'translateX(3px)':'none'}}><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
-  </div>))}</div></div>);
+  </div>))}</div>
+  {confData.length>0&&<div style={{marginTop:20}}><Card title="Llyana AI Confidence Tracking" delay={.3}>
+    <div style={{fontSize:'11px',color:C.dim,marginBottom:12}}>AI confidence over time across all modules. As Llyana processes more data, accuracy improves.</div>
+    <LnChart data={confData.map(d=>d.confidence)} labels={confData.map(d=>d.date)} h={140} unit="%" />
+    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{['reactor','thermal','materials','operations','safety','energy'].map(mod=>{
+      const modConf=confData.filter(d=>d.module===mod);
+      const avg=modConf.length?Math.round(modConf.reduce((a,d)=>a+d.confidence,0)/modConf.length):'-';
+      const modC={reactor:C.red,thermal:C.cyan,materials:C.orange,operations:C.green,safety:C.yellow,energy:'#a78bfa'}[mod];
+      return<div key={mod} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 12px',flex:'1 1 100px',minWidth:100}}>
+        <div style={{fontSize:'9px',color:modC,fontWeight:600,textTransform:'uppercase',letterSpacing:'.5px'}}>{mod}</div>
+        <div style={{fontFamily:'monospace',fontSize:'18px',fontWeight:700,color:avg==='-'?C.muted:avg>=90?C.green:avg>=75?C.yellow:C.orange}}>{avg}{avg!=='-'&&'%'}</div>
+        <div style={{fontSize:'9px',color:C.muted}}>{modConf.length} analyses</div>
+      </div>
+    })}</div>
+  </Card></div>}
+  </div>);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -868,7 +913,7 @@ function ReactorPage({token,userId}){
     if(pA==='WARNING'||pA==='CRITICAL')recs.push({title:'Pressure Alert',desc:`Pressure ${p} bar outside optimal.`,sev:'warning'});if(fA!=='SAFE')recs.push({title:'Flow Rate Adjustment',desc:`Flow ${f} L/s needs adjustment.`,sev:'warning'});
     if(!recs.length)recs.push({title:'All Systems Nominal',desc:'Parameters within optimal range.',sev:'safe'});
     const overall=recs.some(r=>r.sev==='critical')?'CRITICAL':recs.some(r=>r.sev==='warning')?'WARNING':'SAFE';
-    return{eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall,nFlux:(2.2+Math.random()*.4).toFixed(1)+'e13',cRod:Math.round(60+Math.random()*15),xenon:+(1+Math.random()*.5).toFixed(1)};
+    return{eff:Math.round(eff*10)/10,tPct:Math.round(tPct*10)/10,pPct:Math.round(pPct*10)/10,recs,overall,nFlux:((eff/100*3400*3.1e10)/3.2e7).toExponential(2),cRod:Math.round(45+(t-280)/(600-280)*30),xenon:+(0.8+(eff/100)*0.7).toFixed(1)};
   };
 
   const run=async()=>{
@@ -1048,11 +1093,12 @@ function MaterialsPage({token,userId}){
     setDeleting(null);
   };
   const[aiActive,setAiActive]=useState(false);const[reasoning,setReasoning]=useState([]);const[crossImpacts,setCrossImpacts]=useState([]);const[confidence,setConfidence]=useState(null);const[aiRecs,setAiRecs]=useState([]);
+  const[corrMechanism,setCorrMechanism]=useState(null);const[corrRemaining,setCorrRemaining]=useState(null);
   useEffect(()=>{if(!token)return;
     loadLastAiLog('materials',token).then(log=>{
       if(log?.full_response){const ai=log.full_response;
         setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
-        setAiRecs(parseRecs(ai.recommendations));
+        setAiRecs(parseRecs(ai.recommendations));setCorrMechanism(safeText(ai.corrosion_mechanism));setCorrRemaining(ai.corrosion_remaining_mm||null);
         _lastAiResponse['materials']=ai;}
     });
     dbGet('nuclear_materials',token,'order=material_name.asc').then(d=>{if(d?.length){setMats(d);setSel(d[0].id)}});},[token]);
@@ -1081,11 +1127,11 @@ function MaterialsPage({token,userId}){
       remLife=ai.remaining_life_months||Math.round((100-deg)/1.5);
       corrRate=ai.corrosion_rate||Math.round(deg*.3*100)/100;
       setConfidence(ai.confidence||null);setReasoning(parseReasoning(ai.reasoning));setCrossImpacts(parseCrossImpacts(ai.cross_module_impacts));
-      setAiRecs(parseRecs(ai.recommendations));
+      setAiRecs(parseRecs(ai.recommendations));setCorrMechanism(safeText(ai.corrosion_mechanism));setCorrRemaining(ai.corrosion_remaining_mm||null);
     } else {
       st=deg>15?'warning':deg>10?'monitor':'safe';
       remLife=Math.round((100-deg)/1.5);corrRate=Math.round(deg*.3*100)/100;
-      setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);
+      setConfidence(null);setReasoning([]);setCrossImpacts([]);setAiRecs([]);setCorrMechanism(null);setCorrRemaining(null);
     }
     setAiActive(false);
     await dbPost('nuclear_materials',{material_name:newName,degradation_pct:deg,status:st,last_inspection:new Date().toISOString().slice(0,10),remaining_life_months:remLife,corrosion_rate:corrRate,user_id:userId},token);
@@ -1117,8 +1163,13 @@ function MaterialsPage({token,userId}){
         </Card>
         {selMat&&<Card title={`Details: ${selMat.material_name}`} delay={.25}>
           <div style={{fontSize:'24px',fontFamily:'monospace',fontWeight:700,color:(+selMat.degradation_pct)>12?C.orange:C.red,marginBottom:8}}>{(+selMat.degradation_pct).toFixed(1)}%</div>
-          {[['Status',selMat.status?.toUpperCase()],['Remaining Life',selMat.remaining_life_months+' months'],['Corrosion Rate',selMat.corrosion_rate],['Last Inspection',selMat.last_inspection]].map(([l,v])=><div key={l} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',fontSize:'11px'}}><span style={{color:C.muted}}>{l}</span><span style={{fontFamily:'monospace',color:C.text}}>{v||'-'}</span></div>)}
+          {[['Status',selMat.status?.toUpperCase()],['Remaining Life',selMat.remaining_life_months+' months'],['Corrosion Rate',(selMat.corrosion_rate||0)+' mm/yr'],['Last Inspection',selMat.last_inspection]].map(([l,v])=><div key={l} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',fontSize:'11px'}}><span style={{color:C.muted}}>{l}</span><span style={{fontFamily:'monospace',color:C.text}}>{v||'-'}</span></div>)}
         </Card>}
+        {corrMechanism&&<Card title="Corrosion Prediction" delay={.15}><div style={{fontSize:'11px',color:C.dim}}>
+          <div style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:`1px solid ${C.border}`}}><span style={{color:C.muted}}>Mechanism</span><span style={{fontFamily:'monospace',color:C.orange}}>{corrMechanism}</span></div>
+          {corrRemaining&&<div style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:`1px solid ${C.border}`}}><span style={{color:C.muted}}>Wall Remaining</span><span style={{fontFamily:'monospace',color:corrRemaining>5?C.green:corrRemaining>2?C.yellow:C.red}}>{corrRemaining} mm</span></div>}
+          {selMat&&<div style={{display:'flex',justifyContent:'space-between',padding:'5px 0'}}><span style={{color:C.muted}}>Rate</span><span style={{fontFamily:'monospace',color:C.cyan}}>{selMat.corrosion_rate||0} mm/yr</span></div>}
+        </div></Card>}
         {mats.length>0&&<Card title="Select Material" delay={.2}>{mats.map(m=><div key={m.id} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 8px',borderRadius:6,background:sel===m.id?C.redDim:'transparent',marginBottom:2,transition:'all .2s'}}><div onClick={()=>setSel(m.id)} style={{flex:1,display:'flex',justifyContent:'space-between',cursor:'pointer'}}><span style={{fontSize:'11px',color:sel===m.id?C.red:C.dim}}>{m.material_name}</span><span style={{fontSize:'10px',fontFamily:'monospace',color:(+m.degradation_pct)>12?C.orange:C.green}}>{(+m.degradation_pct).toFixed(1)}%</span></div><button onClick={e=>{e.stopPropagation();if(confirm(`Delete ${m.material_name}?`))deleteMat(m.id)}} disabled={deleting===m.id} style={{background:'transparent',border:'none',color:C.muted,fontSize:'10px',cursor:'pointer',padding:'2px 4px',borderRadius:4,opacity:deleting===m.id?.3:1}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>{deleting===m.id?'...':'\u2715'}</button></div>)}</Card>}
       </div>
     </div>
